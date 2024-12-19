@@ -1,1 +1,1 @@
-The combined destructive endpoints for the threshold and multistressor phases of year one of FDEP experiments on Orbicella faveolata.
+The combined destructive endpoints for the threshold and multistressor phases of year one of FDEP experiments on Orbicella faveolata. This was designed as part of an R project and scripts will not work without the data csv or the .R files.
