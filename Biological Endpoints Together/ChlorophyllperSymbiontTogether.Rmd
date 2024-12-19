@@ -1,0 +1,127 @@
+---
+title: "Chlorophyll per Symbiont Together"
+author: "Abby Cannon"
+date: "2024-11-30"
+output: html_document
+---
+
+Alright. Let's bring in our data
+```{r}
+bio <- read.csv("All_Bio_Data_Together.csv")
+```
+
+Now let's make a column for genotype, because that's important. We can do this by extracting everything in front of the dash.
+```{r}
+bio$Genotype <- sub("(^[^-]+)-.*", "\\1", bio$Coral.ID)
+```
+
+Alright. So I think there's a way to do a lot of grouped subtraction very quickly, which is helpful.
+```{r}
+library(dplyr) #The package we need to mutate
+
+#Makes us a data frame where everything has the sacrifice subtracted from it by genotype
+bio.cambios <- bio %>%
+  group_by(Genotype) %>%
+  mutate(change.symbiont = Symbiont.Counts..symbiont.cm2. - Symbiont.Counts..symbiont.cm2.[Treatment == "None"], change.chla = Chl.a - Chl.a[Treatment == "None"], change.Chl.C.2 = Chl.C.2 - 
+           Chl.C.2[Treatment == "None"], change.Chl.a.C.2 = Chl.a.C.2 - 
+          Chl.a.C.2[Treatment == "None"], change.Protein.Concentration = 
+           Protein.Concentration..mg.cm.2.mL.. - Protein.Concentration..mg.cm.2.mL..[Treatment == "None"], 
+         change.Chl.per.symbiont = Chl.a.c.2.per.symbiont..x1000. - Chl.a.c.2.per.symbiont..x1000.[Treatment == "None"])
+```
+
+Now we need to get rid of the trials we didn't end up using
+```{r}
+class(bio.cambios$Experiment) #Numeric, we can make that work
+#New data frame without the experiment numbers we don't like
+cambios <- bio.cambios[ which(bio.cambios$Experiment != 1.1 & 
+                                bio.cambios$Experiment != 2.5), ]
+#This also dropped all the NAs, but that may be okay
+```
+
+Now let's get our experiment numbers since I think that might be importance for difference from sacrifice
+```{r}
+#So first we need to account for 2.10 getting changed to 2.1, but that's an easy fix
+cambios$Experiment <- as.character(cambios$Experiment)
+cambios$Experiment <- gsub("2.1", "2.10", cambios$Experiment)
+
+#Now let's get a column for just trial numbers
+cambios$Trial.Sequence <- as.numeric(sub(".*\\.", "", cambios$Experiment))
+```
+
+And we may also want to get phase. I swear there might be something here
+```{r}
+cambios$Phase <- substr(cambios$Experiment, 1, 1)
+```
+
+So now let's work out what treatment is so we can color code our plots
+```{r}
+class(cambios$Treatment) #It's character, which I think should work well
+unique(cambios$Treatment)
+```
+
+And now we need to get our turbidities and temperature
+```{r}
+#So turbidities are easy, temperatures may be a bit cheekier
+cambios$Turb <- substr(cambios$Treatment, 1, 2)
+cambios$Turb <- as.numeric(cambios$Turb)
+
+#Let's see if we can reverse substring and then replace
+library(stringr) #bringing in a package we need to substring backwards
+cambios$Temp <- str_sub(cambios$Treatment,-3,-1) #Getting the last 3 characters or less when
+#there are less
+cambios$Temp <- gsub("15", "27", cambios$Temp)
+cambios$Temp <- gsub("29", "27", cambios$Temp)
+cambios$Temp <- gsub("50", "27", cambios$Temp)
+cambios$Temp <- gsub("C", "", cambios$Temp)
+cambios$Temp <- gsub("0", "27", cambios$Temp)
+cambios$Temp <- gsub("327", "30", cambios$Temp) #It's only stupid if it doesn't work
+cambios$Temp <- as.numeric(cambios$Temp)
+```
+
+Alright. Now I guess we do some Bayesian analysis of trials together
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+Now I just want column names for the sake of my sanity
+```{r}
+colnames(cambios)
+```
+
+And we need to make genotype random
+```{r}
+cambios$Genotype <- as.factor(cambios$Genotype)
+cambios$Phase <- as.factor(cambios$Phase)
+```
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(Chl.a.c.2.per.symbiont..x1000. ~ Turb * 
+                            Temp * Phase + Genotype, 
+                          data = cambios, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+Everybody is less likely than random noise.
+
+What about changes?
+What about when we look at offset
+```{r}
+#So now we make our Bayesian Models
+bayes_rm.change.Chl.per.symbiont.<- 
+  generalTestBF(change.Chl.per.symbiont ~ Turb * 
+                            Temp*Phase + Genotype, 
+                          data = cambios, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm.change.Chl.per.symbiont.
+```
+Everybody is less likely than random noise.

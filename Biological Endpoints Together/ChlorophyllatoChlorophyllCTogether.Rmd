@@ -1,0 +1,225 @@
+---
+title: "Chla to ChlC Together"
+author: "Abby"
+date: "2024-11-29"
+output: html_document
+---
+
+Alright. Let's bring in our data
+```{r}
+bio <- read.csv("All_Bio_Data_Together.csv")
+```
+
+Now let's make a column for genotype, because that's important. We can do this by extracting everything in front of the dash.
+```{r}
+bio$Genotype <- sub("(^[^-]+)-.*", "\\1", bio$Coral.ID)
+```
+
+Alright. So I think there's a way to do a lot of grouped subtraction very quickly, which is helpful.
+```{r}
+library(dplyr) #The package we need to mutate
+
+#Makes us a data frame where everything has the sacrifice subtracted from it by genotype
+bio.cambios <- bio %>%
+  group_by(Genotype) %>%
+  mutate(change.symbiont = Symbiont.Counts..symbiont.cm2. - Symbiont.Counts..symbiont.cm2.[Treatment == "None"], change.chla = Chl.a - Chl.a[Treatment == "None"], change.Chl.C.2 = Chl.C.2 - 
+           Chl.C.2[Treatment == "None"], change.Chl.a.C.2 = Chl.a.C.2 - 
+          Chl.a.C.2[Treatment == "None"], change.Protein.Concentration = 
+           Protein.Concentration..mg.cm.2.mL.. - Protein.Concentration..mg.cm.2.mL..[Treatment == "None"], 
+         change.Chl.per.symbiont = Chl.a.c.2.per.symbiont..x1000. - Chl.a.c.2.per.symbiont..x1000.[Treatment == "None"])
+```
+
+Now we need to get rid of the trials we didn't end up using
+```{r}
+class(bio.cambios$Experiment) #Numeric, we can make that work
+#New data frame without the experiment numbers we don't like
+cambios <- bio.cambios[ which(bio.cambios$Experiment != 1.1 & 
+                                bio.cambios$Experiment != 2.5), ]
+#This also dropped all the NAs, but that may be okay
+```
+
+Now let's get our experiment numbers since I think that might be importance for difference from sacrifice
+```{r}
+#So first we need to account for 2.10 getting changed to 2.1, but that's an easy fix
+cambios$Experiment <- as.character(cambios$Experiment)
+cambios$Experiment <- gsub("2.1", "2.10", cambios$Experiment)
+
+#Now let's get a column for just trial numbers
+cambios$Trial.Sequence <- as.numeric(sub(".*\\.", "", cambios$Experiment))
+```
+
+And we may also want to get phase. I swear there might be something here
+```{r}
+cambios$Phase <- substr(cambios$Experiment, 1, 1)
+```
+
+So now let's work out what treatment is so we can color code our plots
+```{r}
+class(cambios$Treatment) #It's character, which I think should work well
+unique(cambios$Treatment)
+```
+
+And now we need to get our turbidities and temperature
+```{r}
+#So turbidities are easy, temperatures may be a bit cheekier
+cambios$Turb <- substr(cambios$Treatment, 1, 2)
+cambios$Turb <- as.numeric(cambios$Turb)
+
+#Let's see if we can reverse substring and then replace
+library(stringr) #bringing in a package we need to substring backwards
+cambios$Temp <- str_sub(cambios$Treatment,-3,-1) #Getting the last 3 characters or less when
+#there are less
+cambios$Temp <- gsub("15", "27", cambios$Temp)
+cambios$Temp <- gsub("29", "27", cambios$Temp)
+cambios$Temp <- gsub("50", "27", cambios$Temp)
+cambios$Temp <- gsub("C", "", cambios$Temp)
+cambios$Temp <- gsub("0", "27", cambios$Temp)
+cambios$Temp <- gsub("327", "30", cambios$Temp) #It's only stupid if it doesn't work
+cambios$Temp <- as.numeric(cambios$Temp)
+```
+
+Alright. Now I guess we do some Bayesian analysis of trials together
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+Now I just want column names for the sake of my sanity
+```{r}
+colnames(cambios)
+```
+
+And we need to make genotype random
+```{r}
+cambios$Genotype <- as.factor(cambios$Genotype)
+cambios$Phase <- as.factor(cambios$Phase)
+```
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(Chl.a.C.2 ~ Turb * 
+                            Temp * Phase + Genotype, 
+                          data = cambios, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+1.064004 times more likely than just Genotype
+
+And we'll need to tidy up the categories for a prettier graph.
+```{r}
+
+library(dplyr)
+cambios <- cambios %>% rename(Treatment.bad = Treatment)
+
+step.1 <- paste(cambios$Turb, cambios$Temp, sep = "NTU, ")
+step.2 <- paste(step.1, "ºC", sep = "")
+cambios$Treatment <- step.2 #Makes it the column we want to use for the graph
+sort(unique(cambios$Treatment))
+class(cambios$Treatment)
+```
+
+So now let's graph it and see what we get
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+#And then we make our graph
+p2 <- ggplot(cambios, aes(x = Turb, y = Chl.a.C.2, label = Genotype))+
+  geom_flat_violin(data= cambios, aes(x= Turb, 
+                                          y = Chl.a.C.2, 
+                                        fill = Treatment), 
+                   position = position_nudge(x = 0, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_text_repel(aes(x= Turb, y = Chl.a.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "#FF0000", "#1E90FF", "#000080", 
+                                "#00CD00", "#881B1B"))+
+  scale_fill_manual(values = c("black", "#FF0000", "#1E90FF", "#000080", 
+                                "#00CD00", "#881B1B"))+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  #ylim(0.62, 0.725)+
+  scale_x_continuous(breaks = c(0, 15, 29, 50), labels = c(0, 15, 29, 50), 
+                     limits = c(-2, 57))+
+  labs(fill = "Treatment")+
+  xlab("Turbidity (NTU)")+
+  ylab("Total Chlorophyll μg/ml/cm^2")+
+  ggtitle("Total Chlorophyll by Turbidity")
+
+p2
+```
+Looks quite similar to the chlorophyll a graph.
+
+```{r}
+ggsave(p2, 
+       filename = "TotalChlCombined.png",
+       device = "png")
+```
+
+What about when we look at offset
+```{r}
+#So now we make our Bayesian Models
+bayes_rm.change.Chl.a.C.2<- generalTestBF(change.Chl.a.C.2 ~ Turb * 
+                            Temp*Phase + Genotype, 
+                          data = cambios, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm.change.Chl.a.C.2
+```
+
+```{r}
+plot(bayes_rm.change.Chl.a.C.2)
+```
+Slightly less likely than genotype
+
+So now let's graph it and see what we get
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+#And then we make our graph
+p3 <- ggplot(cambios, aes(x = Turb, y = change.Chl.a.C.2, label = Genotype))+
+  geom_flat_violin(data= cambios, aes(x= Turb, 
+                                          y = change.Chl.a.C.2, 
+                                        fill = Treatment), 
+                   position = position_nudge(x = 0, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_text_repel(aes(x= Turb, y = change.Chl.a.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_fill_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  #ylim(0.62, 0.725)+
+  scale_x_continuous(breaks = c(0, 15, 29, 50), labels = c(0, 15, 29, 50), 
+                     limits = c(-2, 57))+
+  labs(fill = "Treatment")+
+  xlab("Turbidity (NTU)")+
+  ylab("Change in Chlorophyll a to Chlorophyll C2")+
+  ggtitle("Change Chlorophyll a to Chlorophyll C2 by Turbidity")
+
+p3
+```
+This seems to make genotype 84 and 101 in zero turb treatments less of outliers.

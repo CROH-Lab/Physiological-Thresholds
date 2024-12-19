@@ -1,0 +1,348 @@
+---
+title: "Difference from Sacrifice"
+author: "Abby Cannon"
+date: "2024-11-27"
+output: html_document
+---
+
+Alright. Let's bring in our data
+```{r}
+bio <- read.csv("All_Bio_Data_Together.csv")
+```
+
+Now let's make a column for genotype, because that's important. We can do this by extracting everything in front of the dash.
+```{r}
+bio$Genotype <- sub("(^[^-]+)-.*", "\\1", bio$Coral.ID)
+```
+
+Alright. So I think there's a way to do a lot of grouped subtraction very quickly, which is helpful.
+```{r}
+library(dplyr) #The package we need to mutate
+
+#Makes us a data frame where everything has the sacrifice subtracted from it by genotype
+bio.cambios <- bio %>%
+  group_by(Genotype) %>%
+  mutate(change.symbiont = Symbiont.Counts..symbiont.cm2. - Symbiont.Counts..symbiont.cm2.[Treatment == "None"], change.chla = Chl.a - Chl.a[Treatment == "None"], change.Chl.C.2 = Chl.C.2 - 
+           Chl.C.2[Treatment == "None"], change.Chl.a.C.2 = Chl.a.C.2 - 
+          Chl.a.C.2[Treatment == "None"], change.Protein.Concentration = 
+           Protein.Concentration..mg.cm.2.mL.. - Protein.Concentration..mg.cm.2.mL..[Treatment == "None"], 
+         change.Chl.per.symbiont = Chl.a.c.2.per.symbiont..x1000. - Chl.a.c.2.per.symbiont..x1000.[Treatment == "None"])
+```
+
+Now we need to get rid of the trials we didn't end up using
+```{r}
+class(bio.cambios$Experiment) #Numeric, we can make that work
+#New data frame without the experiment numbers we don't like
+cambios <- bio.cambios[ which(bio.cambios$Experiment != 1.1 & 
+                                bio.cambios$Experiment != 2.5), ]
+#This also dropped all the NAs, but that may be okay
+```
+
+Now let's get our experiment numbers since I think that might be importance for difference from sacrifice
+```{r}
+#So first we need to account for 2.10 getting changed to 2.1, but that's an easy fix
+cambios$Experiment <- as.character(cambios$Experiment)
+cambios$Experiment <- gsub("2.1", "2.10", cambios$Experiment)
+
+#Now let's get a column for just trial numbers
+cambios$Trial.Sequence <- as.numeric(sub(".*\\.", "", cambios$Experiment))
+```
+
+So now let's work out what treatment is so we can color code our plots
+```{r}
+class(cambios$Treatment) #It's character, which I think should work well
+unique(cambios$Treatment)
+```
+
+Let's start by plotting change in symbionts
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.algas <- ggplot(cambios, aes(x = Trial.Sequence, y = change.symbiont, label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.symbiont, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+cambio.algas
+  
+```
+
+
+```{r}
+ggplot_build(cambio.algas)$data[[1]]
+```
+So we start with a max value of 10432437.901 and a min value of -695787.2 and end with a max value of -2399626.791 and end with a min value of -13061539.3.
+End max is more less than start min so it does seem like changes in symbionts became increasingly negative over the course of the experiment, but the challenge here is that trial 9 and trial 10 are the same genotypes and resemble each other. There is also the possibilty of weird sacrifices skewing the trials.
+
+What happens when we plot the raw numbers?
+```{r}
+library(ggplot2)
+library(ggrepel)
+algas <- ggplot(cambios, aes(x = Trial.Sequence, y = Symbiont.Counts..symbiont.cm2., label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Symbiont.Counts..symbiont.cm2., 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+algas
+```
+```{r}
+ggplot_build(algas)$data[[1]]
+```
+So for raw numbers of symbionts at start ymin is 20355008 and ymax is 29052174 and at end ymin is 14193930 and ymax is 22526654. Max end value not less than min start value.
+
+And ultimately none of this is anything we found significant differences in without the sacrifices, so we may want to move onto the ones we actually saw it for.
+
+Now let's try changes in Chl.a
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.Chl.a <- ggplot(cambios, aes(x = Trial.Sequence, y = change.chla, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.chla, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.Chl.a  
+```
+Nothing super obvious here
+
+chla raw numbers
+What happens when we plot the raw numbers?
+```{r}
+library(ggplot2)
+library(ggrepel)
+chla <- ggplot(cambios, aes(x = Trial.Sequence, y = Chl.a, label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Chl.a, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+chla
+```
+So I think we can tentatively say no obvious decrease through the experiment and not obviously skewed by weird sacrifices.
+
+Now let's try changes in Chl.a
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.Chl.C.2 <- ggplot(cambios, aes(x = Trial.Sequence, y = change.Chl.C.2, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.Chl.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.Chl.C.2 
+```
+No trends.
+
+And when we do raw numbers?
+Now let's try changes in Chl.a
+```{r}
+library(ggplot2)
+library(ggrepel)
+Chl.C.2 <- ggplot(cambios, aes(x = Trial.Sequence, y = Chl.C.2, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Chl.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+Chl.C.2 
+```
+I would say no, so that's good.
+
+Now let's try changes in Chl.a.C.2
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.Chl.a.C.2 <- ggplot(cambios, aes(x = Trial.Sequence, y = change.Chl.a.C.2, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.Chl.a.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.Chl.a.C.2  
+```
+No obvious trend, but there seems to be a chamber effect
+
+Let's check raw numbers
+```{r}
+library(ggplot2)
+library(ggrepel)
+Chl.a.C.2 <- ggplot(cambios, aes(x = Trial.Sequence, y = Chl.a.C.2, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Chl.a.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+Chl.a.C.2  
+```
+Also not really any clear trend
+
+Now let's try changes in Chl.a
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.Chl.a.C.2 <- ggplot(cambios, aes(x = Trial.Sequence, y = change.Chl.a.C.2, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.Chl.a.C.2, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.Chl.a.C.2  
+```
+
+Now let's try changes in protein
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.protein <- ggplot(cambios, aes(x = Trial.Sequence, y = change.Protein.Concentration, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.Protein.Concentration, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.protein 
+```
+No clear temporal trend, but downwards
+
+Now let's try raw protein numbers
+```{r}
+library(ggplot2)
+library(ggrepel)
+protein <- ggplot(cambios, aes(x = Trial.Sequence, y = Protein.Concentration..mg.cm.2.mL.., 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Protein.Concentration..mg.cm.2.mL.., 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+protein 
+```
+Still no clear trends
+
+Let's check chlorophyll per symbiont changes
+```{r}
+library(ggplot2)
+library(ggrepel)
+cambio.chl.per.symbiont <- ggplot(cambios, aes(x = Trial.Sequence, 
+                                               y = change.Chl.per.symbiont, 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = change.Chl.per.symbiont, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+
+cambio.chl.per.symbiont
+```
+Generally higher than sacrifice, but no temporal trends
+
+Let's check chlorophyll per symbiont raw values.
+```{r}
+library(ggplot2)
+library(ggrepel)
+chl.per.symbiont <- ggplot(cambios, aes(x = Trial.Sequence, 
+                                               y = Chl.a.c.2.per.symbiont..x1000., 
+                                    label = Genotype)) +
+    stat_smooth(method = lm) +
+    geom_point(aes(color = Treatment))+
+  geom_text_repel(aes(x= Trial.Sequence, y = Chl.a.c.2.per.symbiont..x1000., 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "black", "#FF0000", "#1E90FF", 
+                                "#000080", "#000080", "#00CD00", "#881B1B"))+
+  scale_x_continuous(breaks = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     labels = c(2, 3, 4, 6, 7, 8, 9, 10), 
+                     limits = c(1, 11))
+
+chl.per.symbiont
+```
