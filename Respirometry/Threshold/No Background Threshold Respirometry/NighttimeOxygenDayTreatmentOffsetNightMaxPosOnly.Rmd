@@ -1,0 +1,322 @@
+---
+title: "Nighttime Threshold Integrated Offset from Night Max"
+author: "Abby Cannon"
+date: "2024-10-08"
+output: html_document
+---
+First let's bring in our data files
+```{r}
+dos <- read.csv("Trial2FromNightMaxPosOnly.csv")
+tres <- read.csv("Trial3FromNightMaxPosOnly.csv")
+cuatro <- read.csv("Trial4FromNightMaxPosOnly.csv")
+nueve <- read.csv("Trial9FromNightMaxPosOnly.csv")
+```
+
+clearning up our data
+```{r}
+#Getting rid of a column of NAs
+dos <- dos[ , -which(names(dos) %in% c("NA."))]
+tres <- tres[ , -which(names(tres) %in% c("NA."))]
+
+#Now we need a fuction to get the columns in common
+get_common_cols <- function(df1, df2)  intersect(names(df1), names(df2))
+compartido <-get_common_cols(dos, tres) #List of the shared ones
+library(dplyr) #Package we need for this
+tres %>% 
+  select(-matches(compartido)) #Drops all the shared ones and only leaves the one that isn't
+```
+So we have some disagreement about how the day is labeled. Let's rename columns by name
+```{r}
+names(dos)[names(dos) == 'Day'] <- 'Day.of.Exp'
+names(tres)[names(tres) == 'Day'] <- 'Day.of.Exp'
+names(cuatro)[names(cuatro) == 'Day'] <- 'Day.of.Exp'
+names(nueve)[names(nueve) == 'Day'] <- 'Day.of.Exp'
+#Not all of them needed re-naming, but there's no harm in doing it this way and it doesn't take much more programming time
+```
+
+Now our problem seems to be that Treatment is classified differently in the different data frames, so we need to fix that.
+```{r}
+unique(dos$Treatment) #50 29 15  0
+unique(tres$Treatment) #50 29 15  0
+unique(cuatro$Treatment) #50 29 15  0
+unique(nueve$Treatment) #"50 NTU" "29 NTU" "15 NTU" "0 NTU" There's the problem
+```
+
+Let's make that one integer
+```{r}
+numeros <- substr(nueve$Treatment, 1, 2) #Gets the first two pieces of each character
+inte <- as.integer(numeros) #Makes them into integers like the rest
+nueve$Treatment <- inte
+```
+
+Now maybe we can put everything together
+```{r}
+datos <- bind_rows(dos, tres, cuatro, nueve)
+```
+
+How many different values do we have for day and night
+```{r}
+unique(datos$Time.of.Day) #Only "day" and "night" so no trimming needed
+```
+
+Now we have to deal with filling in the missing loops for some treatments.
+4 trials * 8 chambers * 72 hours = 2304
+datos has 2250 rows so we're missing 54 loops total. This may be a bigger or smaller problem depending on where the missing values are.
+
+First we're going to make a dummy data frame for all hours and treatments and chambers and merge it to our actual data to find where our missing values are
+```{r}
+#sequence for hours
+hora.seq <- (1:72)
+Hour <- rep(hora.seq, 32) #Repeats our sequence 32 times
+
+#Sequence for chambers
+camara.sec <- c(rep(1, 72), rep(2, 72), rep(3, 72), rep(4, 72), rep(5, 72), rep(6, 72),
+                rep(7, 72), rep(8, 72))
+Chamber <- rep(camara.sec, 4) #Repeats it 4 times
+
+#Sequence for Trials
+Trial <- c(rep(2, 576), rep(3, 576), rep(4, 576), rep(9, 576))
+
+ideal <- data.frame(Hour, Chamber, Trial)
+
+datos.with.missing <- merge(datos, ideal, by = c("Hour", "Trial", "Chamber"), all = TRUE)
+```
+
+So looking at data there's only one time there was a first hour of the experiment missing. There's also probably a way to interpolate everything, but based on how that command works I may need to restructure the data a bit
+```{r}
+#Making a less unwieldy data frame to cast
+data.for.interp <- data.frame (Trial = datos.with.missing$Trial, Chamber = datos.with.missing$Chamber, Hour = datos.with.missing$Hour, oxy = datos.with.missing$MO2.from.Dark.Max)
+
+#Although it's going to be hard to do with two ID pieces
+data.for.interp$ID <- paste("Trial." ,data.for.interp$Trial, ".Chamber.", data.for.interp$Chamber, sep = "")
+
+library(reshape2) #Bringing in the reshape package
+
+#Making a wide data set that only has 72 observations
+ancho <- data.for.interp %>%
+    dcast(Hour ~ ID, value.var = "oxy")
+
+library(zoo) #We need this package to interpolate
+library(dplyr) #And we need this one interpolate across multiple columns at once and fill in some data
+library(tidyr)
+
+#-0.0011533543 is the value for hour 2 in 2-7, which is the only one that has an NA as its first value
+
+#So we tell it that it's first value and second value are the same this time
+ancho[1,][is.na(ancho[1,])] <- -0.0011533543
+
+#The problem is we have more columns with 72 being blank. But there's a way we can fill them in. This replaces the NAs with the values above them
+ancho[71:72,] <- ancho[71:72,] %>% 
+  fill(2:33, .direction = "down")
+```
+
+Now maybe we can finally interpolate the NAs that aren't on the ends of things
+```{r}
+ancho.filled <- ancho %>%
+  mutate(across(c(Trial.2.Chamber.1:Trial.9.Chamber.8), ~ na.approx(.x, na.rm = TRUE, maxgap=4)))
+```
+
+Now we melt our data and put it back together with what we already had
+```{r}
+melted.ancho <- melt(ancho.filled, id = c("Hour"))
+
+#Let's rename for the sake of our sanity
+names(melted.ancho)[names(melted.ancho) == 'value'] <- 'Interpolated.MO2'
+
+#And now let's bring back our old columns with some substringing
+melted.ancho$Trial <- substr(melted.ancho$variable, 7,7)
+melted.ancho$Chamber <- substr(melted.ancho$variable, 17, 17)
+
+#And then some additional renaming that will be useful later
+names(melted.ancho)[names(melted.ancho) == 'variable'] <- 'ID'
+
+#Putting it back together
+datos.int <- merge(datos.with.missing, melted.ancho, by = c("Hour", "Trial", "Chamber"))
+```
+
+Now let's make sure we aren't having overlap between day and night
+```{r}
+#Checking that we can separate day and night
+dia <- datos.int[ which(datos.int$Time.of.Day == "day"), ]
+unique(dia$Hour) #Only day values
+
+noche<-datos.int[ which(datos.int$Time.of.Day == "night"), ]
+unique(noche$Hour) #Only night values
+
+#Seeing where they overlap
+intersect(unique(noche$Hour), unique(dia$Hour)) #They don't. Perfect
+```
+
+Now we aggregate by day and for night
+```{r}
+#So now we have to work out how to calculate areas
+library(zoo) #Apparently we need this package
+```
+
+```{r}
+#And a slightly different function for a slightly different data frame
+#Still area under a curve
+baja.curva.3 <- function(noche) {
+  noche %>%
+    summarise(oxy = sum(diff(Hour[order(Hour)])*
+                          rollmean(Interpolated.MO2[order(Hour)],2)))
+     }
+
+#Making a tibble of our data
+library(tidyverse)
+
+oxy.by.night <- noche %>%
+  group_by(Trial, Treatment, Chamber, Genotype, Day.of.Exp) %>%
+  baja.curva.3()
+
+```
+Even more packages and then plots and statistical analysis
+```{r}
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+source("summarySE.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+```
+
+```{r}
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+
+sum.oxy.by.night <- summarySE(oxy.by.night, measurevar = "oxy",
+                       groupvars=c("Treatment", "Day.of.Exp"))
+
+p2 <- ggplot(oxy.by.night, aes(x=Day.of.Exp, y = oxy))+
+  
+  geom_flat_violin(data=oxy.by.night, aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                        fill = factor(Treatment)), 
+                   position = position_nudge(x = .25, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_point(aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                    colour = factor(Treatment), shape = factor(Treatment)), 
+             position = position_jitter(width = .2), size = 2)+
+  geom_line(data = sum.oxy.by.night, aes(x = as.numeric(Day.of.Exp)+.25, y = oxy_mean, 
+                                       group = factor(Treatment), colour = factor(Treatment)), 
+            linetype = 3)+
+  scale_color_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  scale_fill_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  scale_shape_manual(values = c(15, 3, 17, 4))+
+  labs(color = "Target NTU", fill= "Target NTU", shape = "Target NTU")+ 
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed")+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  xlab("Day of Experiment")+
+  ylab("Oxygen Produced mg/L/12 hrs")+
+  ggtitle("Nighttime Oxygen Production by Day and Treatment")
+
+p2
+```
+
+saves our graph, which is useful for the future
+```{r}
+ggsave(p2, 
+       filename = "NighttimeThresholdIntegratedOffsetfromNightMaxPosOnly.png",
+       device = "png")
+```
+
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+```{r}
+#And now for this to work we're going to need an ID column
+oxy.by.night$ID <- paste(oxy.by.night$Trial, oxy.by.night$Chamber, sep = "-")
+#And it needs to be a factor
+oxy.by.night$ID <- as.factor(oxy.by.night$ID)
+
+#Now let's see what our treatment is. We want it Numeric or integer
+class(oxy.by.night$Treatment) #Integer, probably okay
+```
+
+```{r}
+#And day of experiment
+class(oxy.by.night$Day.of.Exp) #Also integer
+```
+
+```{r}
+#And genotype
+class(oxy.by.night$Genotype) #Integer. We want it to be a factor
+```
+
+```{r}
+oxy.by.night$Genotype <- as.factor(oxy.by.night$Genotype) #Numbers don't mean anything
+```
+
+Now let’s make some models
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(oxy ~ Day.of.Exp * Treatment * Genotype + ID,
+                          data = oxy.by.night, whichRandom = "ID", neverExclude="^ID$")
+```
+
+```{r}
+#Prints out our model and tells us what's good.
+bayes_rm
+```
+
+```{r}
+plot(bayes_rm)
+```
+So Genotype + IS is apparently the most likely
+
+#Gets every model diveded by evey other model
+```{r}
+bfmat <- bayes_rm/bayes_rm
+
+bfmat[5,] #Prints out the first column, which lets us looks for our most likely model. It will have the biggest number
+```
+Genotype is 8.644923 times more likely than just ID
+
+Let's see what it looks like graphed
+Even more packages and then plots and statistical analysis
+```{r}
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+source("summarySE.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+```
+
+```{r}
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+
+sum.oxy.by.night.genotype <- summarySE(oxy.by.night, measurevar = "oxy",
+                       groupvars=c("Genotype", "Day.of.Exp"))
+
+p3 <- ggplot(oxy.by.night, aes(x=Day.of.Exp, y = oxy))+
+  
+  geom_flat_violin(data=oxy.by.night, aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                        fill = factor(Genotype)), 
+                   position = position_nudge(x = .25, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_point(aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                    colour = factor(Genotype), shape = factor(Treatment)), 
+             position = position_jitter(width = .2), size = 2)+
+  geom_line(data = sum.oxy.by.night.genotype, aes(x = as.numeric(Day.of.Exp)+.25, y = oxy_mean, 
+                                       group = factor(Genotype), colour = factor(Genotype)), 
+            linetype = 3)+
+  #scale_color_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  #scale_fill_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  scale_shape_manual(values = c(15, 3, 17, 4))+
+  labs(color = "Target NTU", fill= "Target NTU", shape = "Target NTU")+ 
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed")+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  xlab("Day of Experiment")+
+  ylab("Oxygen Produced mg/L/12 hrs")+
+  ggtitle("Nighttime Oxygen Production by Day and Genotype")
+
+p3
+```
+saves our graph, which is useful for the future
+```{r}
+ggsave(p3, 
+       filename = "GenotypeEasterRespirometryNightmare.png",
+       device = "png")
+```

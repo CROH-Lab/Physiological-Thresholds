@@ -1,0 +1,112 @@
+---
+title: "Daytime Threshold Integrated Offset from Night Max"
+author: "Abby Cannon"
+date: "2024-10-08"
+output: html_document
+---
+
+First let's bring in our data files
+```{r}
+dos <- read.csv("Trial2FromNightMax.csv")
+tres <- read.csv("Trial3FromNightMax.csv")
+cuatro <- read.csv("Trial4FromNightMax.csv")
+nueve <- read.csv("Trial9FromNightMax.csv")
+```
+
+clearning up our data
+```{r}
+#Getting rid of a column of NAs
+dos <- dos[ , -which(names(dos) %in% c("NA."))]
+tres <- tres[ , -which(names(tres) %in% c("NA."))]
+
+#Now we need a fuction to get the columns in common
+get_common_cols <- function(df1, df2)  intersect(names(df1), names(df2))
+compartido <-get_common_cols(dos, tres) #List of the shared ones
+library(dplyr) #Package we need for this
+tres %>% 
+  select(-matches(compartido)) #Drops all the shared ones and only leaves the one that isn't
+```
+
+So we have some disagreement about how the day is labeled. Let's rename columns by name
+```{r}
+names(dos)[names(dos) == 'Day'] <- 'Day.of.Exp'
+names(tres)[names(tres) == 'Day'] <- 'Day.of.Exp'
+names(cuatro)[names(cuatro) == 'Day'] <- 'Day.of.Exp'
+names(nueve)[names(nueve) == 'Day'] <- 'Day.of.Exp'
+#Not all of them needed re-naming, but there's no harm in doing it this way and it doesn't take much more programming time
+```
+
+Now our problem seems to be that Treatment is classified differently in the different data frames, so we need to fix that.
+```{r}
+unique(dos$Treatment) #50 29 15  0
+unique(tres$Treatment) #50 29 15  0
+unique(cuatro$Treatment) #50 29 15  0
+unique(nueve$Treatment) #"50 NTU" "29 NTU" "15 NTU" "0 NTU" There's the problem
+```
+Let's make that one integer
+```{r}
+numeros <- substr(nueve$Treatment, 1, 2) #Gets the first two pieces of each character
+inte <- as.integer(numeros) #Makes them into integers like the rest
+nueve$Treatment <- inte
+```
+
+Now maybe we can put everything together
+```{r}
+datos <- bind_rows(dos, tres, cuatro, nueve)
+```
+
+How many different values do we have for day and night
+```{r}
+unique(datos$Time.of.Day) #So we only have "day" and "night", which is perfect
+```
+
+Now we have to deal with filling in the missing loops for some treatments.
+4 trials * 8 chambers * 72 hours = 2304
+datos has 2250 rows so we're missing 54 loops total. This may be a bigger or smaller problem depending on where the missing values are.
+
+First we're going to make a dummy data frame for all hours and treatments and chambers and merge it to our actual data to find where our missing values are
+```{r}
+#sequence for hours
+hora.seq <- (1:72)
+Hour <- rep(hora.seq, 32) #Repeats our sequence 32 times
+
+#Sequence for chambers
+camara.sec <- c(rep(1, 72), rep(2, 72), rep(3, 72), rep(4, 72), rep(5, 72), rep(6, 72),
+                rep(7, 72), rep(8, 72))
+Chamber <- rep(camara.sec, 4) #Repeats it 4 times
+
+#Sequence for Trials
+Trial <- c(rep(2, 576), rep(3, 576), rep(4, 576), rep(9, 576))
+
+ideal <- data.frame(Hour, Chamber, Trial)
+
+datos.with.missing <- merge(datos, ideal, by = c("Hour", "Trial", "Chamber"), all = TRUE)
+```
+
+So looking at data there's only one time there was a first hour of the experiment missing. There's also probably a way to interpolate everything, but based on how that command works I may need to restructure the data a bit
+```{r}
+#Making a less unwieldy data frame to cast
+data.for.interp <- data.frame (Trial = datos.with.missing$Trial, Chamber = datos.with.missing$Chamber, Hour = datos.with.missing$Hour, oxy = datos.with.missing$MO2.from.Dark.Max)
+
+#Although it's going to be hard to do with two ID pieces
+data.for.interp$ID <- paste("Trial." ,data.for.interp$Trial, ".Chamber.", data.for.interp$Chamber, sep = "")
+
+library(reshape2) #Bringing in the reshape package
+
+#Making a wide data set that only has 72 observations
+ancho <- data.for.interp %>%
+    dcast(Hour ~ ID, value.var = "oxy")
+
+library(zoo) #We need this package to interpolate
+library(dplyr) #And we need this one interpolate across multiple columns at once and fill in some data
+
+#-0.0011533543 is the value for hour 2 in 2-7, which is the only one that has an NA as its first value
+
+#So we tell it that it's first value and second value are the same this time
+ancho[1,][is.na(ancho[1,])] <- -0.0011533543
+
+#The problem is we have more columns with 72 being blank. But there's a way we can fill them in. This replaces the NAs with the values above them
+ancho[71:72,] <- ancho[71:72,] %>% 
+  fill(2:33, .direction = "down")
+```
+
