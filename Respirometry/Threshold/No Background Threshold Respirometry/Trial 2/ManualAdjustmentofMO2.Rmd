@@ -1,0 +1,123 @@
+---
+title: "Trial 2 Adjusted Background"
+author: "Abby"
+date: "2024-09-03"
+output: html_document
+---
+
+So first we bring in our data
+```{r}
+background <- read.csv("BackgroundRatesCalculated.csv")
+MO2.no.BG <- read.csv("Trial2NoBG.csv")
+colnames(background) #So there's a lot, but I can make it work
+```
+
+So I think it's going to need to start cleaning, because this is a mess.
+```{r}
+#First lets get our treatment effects
+XX <- background[ , grepl( "X" , names( background ) ) ]
+
+#And then we need our loops
+Loops <- background$Loop
+
+#Now we put it together
+library(dplyr) #bringing in the package we need
+LoopXX <- bind_cols(XX, Loops) #new combined data frame
+
+#But it ended up with a truly stupid column name
+colnames(LoopXX)[8] <- "Loop"
+
+#And I think a column labeled X is just going to get in the way
+LoopXX <- LoopXX[,!names(LoopXX) %in% c("X")]
+```
+
+Alright. Now I think we may need to add some information to the background
+```{r}
+#First we make a column for temperature
+MO2.no.BG$Temp <- rep(27)
+
+#Now I think we need to get rid of certain columns with non-relevant info for the sake of my sanity
+MO2.no.BG <- MO2.no.BG[,!names(MO2.no.BG) %in% c("X.1", "X", "NA.")]
+```
+
+Now we need to work on separating the treatments and temperatures out of our Loops and treatment backgrounds
+```{r}
+library(reshape2) #bringing in the package we need to melt
+meltyloops <- melt(LoopXX, id = "Loop") #Makes it so we have three columns, with loop and our treatments, which are all called variable at the moment and Value is our MO2, which we need to fix
+
+#Renames the column
+colnames(meltyloops)[colnames(meltyloops) == 'value'] <- 'Background.MO2'
+
+#Now we need our treatments and temperatures
+class(meltyloops$variable) #It's a factor, we many need to change it to character
+v <- as.character(meltyloops$variable) #Looks good
+meltyloops$variable <- v
+
+#Now we work on extracting our information, which is why we bothered to make it character
+library(stringr)
+Treatment <- str_match(meltyloops$variable, "X\\s*(.*?)\\s*N") #So that kind of worked, but gave us some extra characters. We can fix it with gsub though
+Treatment <- gsub("X", "", Treatment) #First we get rid of the "X"
+Treatment <- gsub("N", "", Treatment) #Then we get rid of the "N"
+meltyloops$Treatment <- Treatment[,1] #It had 2 for some reason, now we have 1
+
+#Now let's get the second to last characters
+Temp <- str_sub(meltyloops$variable, -3, -2) #numbering still goes left to right
+meltyloops$Temp <- Temp
+
+```
+
+Now we need to see if any of the background readings trend any particular way
+```{r}
+library(ggplot2) #Bringing in the package we need for plotting
+
+# Scatter plot by group
+ggplot(meltyloops, aes(x = Loop, y = Background.MO2, color = variable)) +
+  geom_point()+
+  geom_smooth(method = lm)+
+  theme_bw() #Easier to make sense of confidence intervals with black and white theme
+```
+So we'll tentatively say that the 30C treatments decline over time, but the 27C treatments hold steady. So we can take an average of the 27C treatments, but will need to calculate slopes for 30C
+
+```{r}
+#First we need to get just the data for the 30C treatments and their respective turbidities
+
+#Just 30 and 0
+X0NTU.30C <- meltyloops[ which(meltyloops$variable== "X0NTU.30C"), ]
+
+#Just 30 and 29
+X29NTU.30C <- meltyloops[ which(meltyloops$variable== "X29NTU.30C"), ]
+
+#Now we do our linear regressions. 
+#We'll start with 30C, 0 NTU
+lm.hot.clean <- lm(X0NTU.30C$Background.MO2 ~ X0NTU.30C$Loop)
+summary(lm.hot.clean) #MO2 = 0.01188*Loop -0.2015851
+#Now 30C, 29NTU
+lm.hot.dirty <- lm(X29NTU.30C$Background.MO2 ~ X29NTU.30C$Loop)
+summary(lm.hot.dirty) #MO2 = 0.005439*Loop -0.074406
+```
+So this actually gets easier if we don't use the 30C treatments and since this data set is only the threshold experiment we can do that. Although I guess we can get means for everything
+```{r}
+#Gets us a data frame of all the 
+background.means <-aggregate(meltyloops$Background.MO2, list(meltyloops$Treatment, meltyloops$Temp), FUN = "mean")
+
+#Although it looks like we'll need to change some names
+colnames(background.means) #"Group.1" "Group.2" "x"
+
+library(data.table) #A package we'll need to easily rename columns
+
+#Changing the names
+setnames(background.means, old = c("Group.1", "Group.2", "x"), 
+         new = c("Treatment", "Temp", "Background MO2"))
+
+#Now we put it back together and calculate
+MO2.and.BG <- merge(MO2.no.BG, background.means, by = c("Treatment", "Temp"))
+```
+
+Let's see if this solves the apparent nighttime oxygen production problem or not
+```{r}
+#Let's subtract chamber oxygen production from coral oxygen production
+MO2.and.BG$Coral.MO2 <- MO2.and.BG$MO2 - MO2.and.BG$`Background MO2`
+#So that doesn't look good at all, but I'll graph it to prove a point.
+```
+
+
