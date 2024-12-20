@@ -1,0 +1,450 @@
+---
+title: "Day Oxygen by Treatment and Day No Genotype"
+author: "Abby Cannon"
+date: "2024-10-29"
+output: html_document
+---
+
+First let's bring in our data files
+```{r}
+seis <- read.csv("Trial6NoBG.csv")
+siete <- read.csv("Trial7NoBG.csv")
+ocho <- read.csv("CorrectedTrial8NoBG.csv")
+diez <- read.csv("Trial10NoBG.csv")
+```
+So we got them in, but they aren't all the same dimmensions, so that may take some cleaning
+
+So let's start by getting rid of some extraneous Xs in the various data frames. We can also get rid of the NA. columns this way I think.
+```{r}
+library(dplyr) #The package we need 
+#drop all columns with X or NA.
+ocho_new <- ocho %>% select(-contains (c("X", "NA.")))
+seis_new <- seis %>% select(-contains (c("X", "NA.")))
+siete_new <- siete %>% select(-contains (c("X", "NA.")))
+diez_new <- diez %>% select(-contains (c("X", "NA.")))
+
+#Of course now the problem is that deleting all the Xs also got rid of #Day.of.Exp, but that can be fixed
+ocho_new$Day.of.Exp <- ocho$Day.of.Exp
+seis_new$Day.of.Exp <- seis$Day.of.Exp
+siete_new$Day.of.Exp <- siete$Day.of.Exp
+diez_new$Day.of.Exp <- diez$Day.of.Exp
+```
+Alright. That should just about take care of it.
+
+I think we can put everything together now
+```{r}
+datos <- bind_rows(ocho_new, seis_new, siete_new, diez_new)
+```
+
+And now let's just make sure that the treatments are consistent
+```{r}
+unique(datos$Treatment) #So we have a few extraneous white spaces
+datos$Treatment <- trimws(datos$Treatment) #how to trim them
+unique(datos$Treatment) #That worked
+```
+
+How many different values do we have for day and night
+```{r}
+unique(datos$Time.of.Day) #A few extras, but we can fix that the same way
+datos$Time.of.Day <- trimws(datos$Time.of.Day) #how to trim them
+unique(datos$Time.of.Day) #Perfect
+```
+
+Now it may be a problem that it chose to classify Hour as something other than numeric, but it should be fixable.
+```{r}
+class(datos$Hour) #It's integer, which shouldn't be such a problem
+class(datos$Trial) #Also integer
+class(datos$Chamber) #Also integer
+#Maybe if we make Trial and Chamber numeric this won't be such a problem
+Tri <- as.numeric(datos$Trial)
+datos$Trial <- Tri
+Cha <- as.numeric(datos$Chamber)
+datos$Chamber <- Cha
+```
+
+Now we have to deal with filling in the missing loops for some treatments.
+4 trials * 8 chambers * 72 hours = 2304
+datos has 2142 rows so we're missing 54 loops total. This may be a bigger or smaller problem depending on where the missing values are.
+
+First we're going to make a dummy data frame for all hours and treatments and chambers and merge it to our actual data to find where our missing values are
+```{r}
+#sequence for hours
+hora.seq <- (1:72)
+Hour <- rep(hora.seq, 32) #Repeats our sequence 32 times
+
+#Sequence for chambers
+camara.sec <- c(rep(1, 72), rep(2, 72), rep(3, 72), rep(4, 72), rep(5, 72), rep(6, 72),
+                rep(7, 72), rep(8, 72))
+Chamber <- rep(camara.sec, 4) #Repeats it 4 times
+
+#Sequence for Trials
+Trial <- c(rep(6, 576), rep(7, 576), rep(8, 576), rep(10, 576))
+
+ideal <- data.frame(Hour, Chamber, Trial)
+
+class(ideal$Hour) #So also integer. That's not the problem
+class(ideal$Trial) #numeric
+class(ideal$Chamber) #numeric
+
+datos.with.missing <- merge(datos, ideal, by = c("Hour", "Trial", "Chamber"), all = TRUE)
+```
+
+It looks like we do have some missing data, but it's probably easier to decide what to do about it after reshaping.
+```{r}
+#Making a less unwieldy data frame to cast
+data.for.interp <- data.frame (Trial = datos.with.missing$Trial, Chamber = datos.with.missing$Chamber, Hour = datos.with.missing$Hour, oxy = datos.with.missing$MO2.no.Background.Correction)
+
+#Although it's going to be hard to do with two ID pieces
+data.for.interp$ID <- paste("Trial." ,data.for.interp$Trial, ".Chamber.", data.for.interp$Chamber, sep = "")
+
+library(reshape2) #Bringing in the reshape package
+
+#Making a wide data set that only has 72 observations
+ancho <- data.for.interp %>%
+    dcast(Hour ~ ID, value.var = "oxy")
+```
+Nobody missing a first value is also missing a second. That's good.
+Although some trials are missing as many as 5 readings, which I don't appreciate.
+Everybody in trial 10 is missing their last 5, which is ridiculous.
+I don't think we should count trial 6, chamber 8 for day 3 at all based on how much is missing.
+This might make interpolating a little easier, but I'll have to make a note when it's finally time to calculate.
+
+Let's start interpolating
+```{r}
+#First we bring in the packages we need
+library(zoo) #We need this package to interpolate
+library(dplyr) 
+library(tidyr)
+#And we need this one interpolate across multiple columns at once and fill in some data
+```
+So step one is going to be filling in the ones where the first value is missing
+This replaces them with the second value, which is fine
+```{r}
+ancho[1:2,] <- ancho[1:2,] %>% 
+  fill(2:33, .direction = "up")
+```
+
+Now we need to fill in the midway gaps
+Now maybe we can finally interpolate the NAs that aren't on the ends of things
+```{r}
+colnames(ancho)
+ancho.filled <- ancho %>%
+  mutate(across(c(Trial.6.Chamber.1:Trial.8.Chamber.8), ~ na.approx(.x, na.rm = TRUE, maxgap=5)))
+#So this works for the ones that aren't trial 10, but trial 10 continues to be a problem
+
+#But maybe we can just take a smaller data frame and fix it.
+ten.cuidado <- ancho[ , grepl( "Trial.10" , names(ancho))] #Gets only our trial 10s
+
+#And then we can clip out the NAs at the end in case they're the problem
+clipped.ten.cuiado <- ten.cuidado %>% slice(1:60)
+
+#And then we mutate again to fill in for this section
+filled.ten.cuidado <- clipped.ten.cuiado %>%
+  mutate(across(c(Trial.10.Chamber.1:Trial.10.Chamber.8), ~ na.approx(.x, na.rm = TRUE, maxgap=5)))
+
+#And then we can paste it over where our old values used to be
+ancho.filled[1:60, 2:9] <- filled.ten.cuidado
+```
+
+Alright. Now it's just a matter of remembering not to include certain trial/chamber combinations in other columns, but we can do that
+Now we melt our data and put it back together with what we already had
+```{r}
+melted.ancho <- melt(ancho.filled, id = c("Hour"))
+
+#Let's rename for the sake of our sanity
+names(melted.ancho)[names(melted.ancho) == 'value'] <- 'Interpolated.MO2'
+
+#And now let's bring back our old columns with some substringing
+#Although now that we have a trial 10 it gets a little more complicated
+
+#To get correct chamber numbers we probably want to substring from the right
+library(stringr) #The package we need
+melted.ancho$Chamber <- str_sub(melted.ancho$variable, -1, -1)
+melted.ancho$Trial <- substr(melted.ancho$variable, 7,7)
+#So now our problem is that for Trial 10 it got pasted over as 1, but this can be fixed by substituting 10s for 1s since there was no trial 1
+melted.ancho$Trial <- gsub("1", "10", melted.ancho$Trial)
+
+#And then some additional renaming that will be useful later
+names(melted.ancho)[names(melted.ancho) == 'variable'] <- 'ID'
+
+#Putting it back together
+datos.int <- merge(datos.with.missing, melted.ancho, by = c("Hour", "Trial", "Chamber"))
+```
+
+Now we're going to have to deal with our problem trial/chamber combinations that aren't so good.
+```{r}
+#And I think we'll have to start out by checking the classes of some of the variables for what we want to do
+class(datos.int$Hour) #Integer, should work
+class(datos.int$Trial) #Numeric, also probably okay
+class(datos.int$Chamber) #Numeric, should also work
+
+colnames(datos.int)
+
+#Now we try to mutate based on conditions and replace all values after hour 48 in trial 6 chamber 8 with NAs and all values for night 3 in trial 10 with NAs
+datos.int <- mutate(datos.int,
+                   Interpolated.MO2 = ifelse(Trial == 6 & Chamber == 8 & Hour > 48, NA, Interpolated.MO2),
+                  Interpolated.MO2 = ifelse(Trial == 10 & Hour > 60, NA, Interpolated.MO2))
+```
+
+Now let's make sure we aren't having overlap between day and night
+Day 1: 1-12
+Night 1: 13-24
+Day 2: 25-36
+Night 2: 37-48 
+
+At the moment trial 6, chamber 8 seems to continue to be a nightmare and some of the day of experiment values may also have some problems, so we may have to do some more mutating. But first we should make sure that there's only one day and one night
+
+```{r}
+unique(datos.int$Time.of.Day) #So we have some NAs, probably from the interpolating, but we can fix that.
+datos.int <- mutate(datos.int,
+                   Time.of.Day = ifelse((Hour >= 1 &  Hour < 13) | 
+                                          (Hour > 24 & Hour <= 36) | 
+                                          (Hour > 48 & Hour <= 60), 
+                   "day", Time.of.Day),
+                  Time.of.Day = ifelse((Hour >= 13 &  Hour < 24) | 
+                                          (Hour > 36 & Hour <= 48) | 
+                                          (Hour > 60), 
+                   "night", Time.of.Day))
+unique(datos$Time.of.Day) #Alright. That should take care of that one
+```
+
+Now we need to fix up our Day.of.Exp
+```{r}
+datos.int <- mutate(datos.int,
+                   Day.of.Exp = ifelse(Hour <= 24, 
+                   1, Day.of.Exp),
+                  Day.of.Exp = ifelse(Hour > 24 & Hour <= 48, 
+                   2, Day.of.Exp),
+                  Day.of.Exp = ifelse(Hour > 48, 
+                   3, Day.of.Exp))
+```
+
+And now we're having issues with Treatments, but we can get those too
+```{r}
+#First we find out what chamber goes with what treatment
+check.this <- data.frame(
+  Chamber = datos$Chamber,
+  Treatment = datos$Treatment
+)
+
+#Makes us a data frame 
+u.check.this <- unique(check.this)
+
+#And I think we can just get rid of our old treatment column and then merge it and that will work.
+datos.int$Treatment <- NULL #gets rid of the old column
+datos.int2 <- merge(datos.int, u.check.this, by = "Chamber") #And then we can put it back together
+```
+
+We may have a similar issue with genotypes
+```{r}
+unique(datos.int2$Genotype) #There are NAs, but we can make it work
+
+#We'll need a little more information this time around.
+#First we find out what chamber goes with what treatment
+gen.check.this <- data.frame(
+  Chamber = datos$Chamber,
+  Trial = datos$Trial,
+  Genotype = datos$Genotype
+)
+
+#Get our unique values
+u.gen.check.this <- unique(gen.check.this)
+
+#And I think we can just get rid of our old treatment column and then merge it and that will work.
+datos.int2$Genotype <- NULL #gets rid of the old column
+datos.int3 <- merge(datos.int2, u.gen.check.this, by = c("Chamber", "Trial")) #And then we can put it back together
+```
+
+
+```{r}
+#Checking that we can separate day and night
+dia <- datos.int3[ which(datos.int3$Time.of.Day == "day"), ]
+unique(dia$Hour) #Only day values
+
+noche<-datos.int[ which(datos.int$Time.of.Day == "night"), ]
+unique(noche$Hour) #Only night values
+
+#Seeing where they overlap
+intersect(unique(noche$Hour), unique(dia$Hour)) #They don't. Perfect.
+```
+Now we aggregate by day and for day
+```{r}
+#So now we have to work out how to calculate areas
+library(zoo) #Apparently we need this package
+```
+
+```{r}
+#And a slightly different function for a slightly different data frame
+#Still area under a curve
+baja.curva.3 <- function(dia) {
+  dia %>%
+    summarise(oxy = sum(diff(Hour[order(Hour)])*rollmean(Interpolated.MO2[order(Hour)],2)))
+     }
+
+#Making a tibble of our data
+library(tidyverse)
+
+oxy.by.day <- dia %>%
+  group_by(Trial, Treatment, Chamber, Genotype, Day.of.Exp) %>%
+  baja.curva.3()
+```
+Now we need to make some labels to keep Dr. Bahr happy with our graph
+```{r}
+#First we make a new data frame with our new labels
+nuevas.etiquetas <- data.frame(Treatment = unique(oxy.by.day$Treatment), 
+                               etiqueta = c("0 NTU, 27ºC", "15 NTU, 27ºC", 
+                                            "29 NTU, 27ºC", "50 NTU, 27ºC"))
+
+#Then we attach it to our old one
+oxy.by.day = merge(oxy.by.day, nuevas.etiquetas, by = "Treatment")
+```
+
+Now we can start plotting our data
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+source("summarySE.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+#Now we summarize our data to be able to graph it
+sum.oxy.by.day <- summarySE(oxy.by.day, measurevar = "oxy",
+                       groupvars=c("Treatment", "Day.of.Exp", "etiqueta"), na.rm = TRUE)
+
+#And then we make our graph
+p2 <- ggplot(oxy.by.day, aes(x=Day.of.Exp, y = oxy))+
+  
+  geom_flat_violin(data=oxy.by.day, aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                        fill = etiqueta), 
+                   position = position_nudge(x = .25, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_point(aes(x=factor(Day.of.Exp, levels = 1:3), y = oxy, 
+                                    colour = etiqueta, shape = etiqueta), 
+             position = position_jitter(width = .2), size = 2)+
+  geom_line(data = sum.oxy.by.day, aes(x = as.numeric(Day.of.Exp)+.25, y = oxy_mean, 
+                                       group = etiqueta, colour = etiqueta), 
+            linetype = 3)+
+  scale_color_manual(values = c("black", "#000080", "#FF0000", "#00CD00"))+
+  scale_fill_manual(values = c("black", "#000080", "#FF0000", "#00CD00"))+
+  scale_shape_manual(values = c(15, 17, 16, 18))+
+  labs(color = "Treatment", fill= "Treatment", shape = "Treatment")+ 
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed")+
+  #theme_cowplot()+
+  ylim(c(-0.5, 0.15))+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  xlab("Day of Experiment")+
+  ylab("Oxygen Produced mg/L/12 hrs")+
+  ggtitle("Daylight Oxygen Production by Day and Treatment")
+
+p2
+```
+Now let's get that plot ready
+```{r}
+ggsave(p2, 
+       filename = "DaylightTurbTempTreatmentsLabeled.png",
+       device = "png")
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+```{r}
+#And now for this to work we're going to need an ID column
+oxy.by.day$ID <- paste(oxy.by.day$Trial, oxy.by.day$Chamber, sep = "-")
+#And it needs to be a factor
+oxy.by.day$ID <- as.factor(oxy.by.day$ID)
+```
+
+And we'll need to make columns for temperature and turbidity for analysis and I choose to do this in a kind of silly way
+```{r}
+oxy.by.day$Temperature <- oxy.by.day$Treatment
+class(oxy.by.day$Temperature) #Already character
+#So now we can make some substitutions to get it what it needs to be
+unique(oxy.by.day$Temperature) #Figuring our what we're actually substituting
+#"Control"            "High NTU"           "High Temp"          "High Temp High NTU"
+
+#Now we make the substitutions
+oxy.by.day$Temperature <- gsub("High Temp High NTU", "30", oxy.by.day$Temperature)
+#And we have to do high temp high NTU first, because it has the names of others in it
+oxy.by.day$Temperature <- gsub("Control", "27", oxy.by.day$Temperature)
+oxy.by.day$Temperature <- gsub("High NTU", "27", oxy.by.day$Temperature)
+oxy.by.day$Temperature <- gsub("High Temp", "30", oxy.by.day$Temperature)
+
+#Now we make it numeric
+temperatura <- as.numeric(oxy.by.day$Temperature)
+
+#And then we put it back in our data frame
+oxy.by.day$Temperature <- temperatura
+```
+
+And now we'll have to do something very similar for turbidity
+```{r}
+oxy.by.day$Turbidity <- oxy.by.day$Treatment
+
+#Now we make the substitutions
+oxy.by.day$Turbidity <- gsub("High Temp High NTU", "29", oxy.by.day$Turbidity)
+#And we have to do high temp high NTU first, because it has the names of others in it
+oxy.by.day$Turbidity <- gsub("Control", "0", oxy.by.day$Turbidity)
+oxy.by.day$Turbidity <- gsub("High NTU", "29", oxy.by.day$Turbidity)
+oxy.by.day$Turbidity <- gsub("High Temp", "0", oxy.by.day$Turbidity)
+
+#Now we make it numeric
+turbidez <- as.numeric(oxy.by.day$Turbidity)
+
+#And then we put it back in our data frame
+oxy.by.day$Turbidity <- turbidez
+```
+
+And day of experiment
+```{r}
+class(oxy.by.day$Day.of.Exp) #Numeric. That should be fine
+```
+
+```{r}
+#And genotype
+class(oxy.by.day$Genotype) #Integer. We want it to be a factor
+```
+```{r}
+oxy.by.day$Genotype <- as.factor(oxy.by.day$Genotype) #Numbers don't mean anything
+```
+
+And now we need to drop the NAs, because that makes the Bayesian model upset
+```{r}
+library(tidyr) #the package we need
+clean.oxy.by.day <- oxy.by.day %>% drop_na(oxy)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(oxy ~ Day.of.Exp * Temperature * Turbidity + ID,
+                          data = clean.oxy.by.day, whichRandom = "ID", neverExclude="^ID$")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+
+What happens when we plot it?
+```{r}
+plot(bayes_rm)
+```
+So the most likely is Day.of.Exp + Temperature + Day.of.Exp:Temperature + Turbidity + Day.of.Exp:Turbidity + ID
+So no interaction between temperature and turbidity although the both interact with day of experiment
+
+Now we get a matrix of the models to see how much more likely this is than just ID
+```{r}
+#Gets every model diveded by evey other model
+bfmat <- bayes_rm/bayes_rm
+
+look.at.this <- bfmat[,19] #Prints out the 19th column, which should show everything divided by ID
+
+look.at.this
+```
+So our model is 2.94864e+11 times as likely as a model just based on ID.
