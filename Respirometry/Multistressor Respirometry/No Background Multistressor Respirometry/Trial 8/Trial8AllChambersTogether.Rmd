@@ -1,0 +1,30 @@
+---
+title: "Trial8AllChambersTogether"
+author: "Abby Cannon"
+date: "2024-10-15"
+output: html_document
+---
+
+First we bring in all our data
+```{r}
+uno <-read.csv("Trial8Chamber1NoBG.csv")
+dos <-read.csv("Trial8Chamber2NoBG.csv")
+tres <-read.csv("Trial8Chamber3NoBG.csv")
+cuatro <-read.csv("Trial8Chamber4NoBG.csv")
+cinco <-read.csv("Trial8Chamber5NoBG.csv")
+seis <-read.csv("Trial8Chamber6NoBG.csv")
+siete <-read.csv("Trial8Chamber7NoBG.csv")
+ocho <-read.csv("Trial8Chamber8NoBG.csv")
+```
+
+Now we put them together
+```{r}
+library(dplyr) #package we will need for this
+
+#row binds multiple data frames at once, which is convenient
+datos <- bind_rows(uno, dos, tres, cuatro, cinco, seis, siete, ocho)
+
+datos$Trial <- rep(8) #Adds a trial ID, which we'll need when we put everything together
+
+#write.csv(datos, "Trial8NoBG.csv")
+```

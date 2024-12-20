@@ -1,0 +1,98 @@
+---
+title: "Trial 8 Night Max Is Zero"
+author: "Abby Cannon"
+date: "2024-10-18"
+output: html_document
+---
+
+Let's start by bringing in our data
+```{r}
+datos <- read.csv("Trial8NoBG.csv")
+```
+
+Now let's get just our night data
+```{r}
+class(datos$Time.of.Day) #It's character
+#And let's check to make sure there are only 2 categories
+unique(datos$Time.of.Day) #Only 2 types, which is perfect
+noche <- datos[ which(datos$Time.of.Day == "night"), ]
+```
+
+Let's get the nighttime maxima for each chamber
+```{r}
+library(dplyr) #The package we need to find max by chamber
+
+#Getting our new data
+night.max <- noche %>%
+  group_by(Chamber) %>%
+  summarise(max = max(MO2.no.Background.Correction, na.rm=TRUE))
+```
+Alright. So this one was a bigger problem, but we can fix it all
+
+Now let's rename a column for easier combining
+```{r}
+colnames(night.max)[2] <- "Max.Dark.MO2"
+```
+
+And come to think of it we probably don't have to be worried when the maximum nighttime value is less than zero. So we won't change those ones even though this means we somewhat underestimate production and overestimate consumption
+```{r}
+night.max$Max.Dark.MO2[night.max$Max.Dark.MO2<0] <- 0
+```
+
+Now let's put it back together with the data we already calculated
+```{r}
+calc <- merge(datos, night.max, by = "Chamber")
+```
+
+Now let's calculate MO2 as offset from Max.Dark.MO2
+```{r}
+calc$MO2.from.Dark.Max <- calc$MO2.no.Background.Correction - calc$Max.Dark.MO2
+```
+
+And now we apparently have more category names than we should, but that's also fixable.
+```{r}
+unique(calc$Treatment) #Alright. Looks like we need to get rid of some excess white
+#space
+library(stringr) #The package we need 
+calc$Treatment <- str_trim(calc$Treatment, side = c("both"))
+unique(calc$Treatment) #Better
+```
+
+So I think I should plot it to see what it looks like
+```{r}
+#We'll need ggplot for graphing and dplyr for knitting
+library(ggplot2)
+library(dplyr)
+
+#Our plot
+dibujo <- ggplot(calc, aes(x= Hour, y= MO2.from.Dark.Max, 
+                 color= as.factor(Treatment))) +
+  geom_tile(aes(x=Hour, y= 0.015, color = NULL, fill= Time.of.Day), width = 1, height = Inf, alpha = 0.05) +
+  #makes tiles that are 1 unit wide and with their fill controlled by time of day. alpha of 0.05 makes them
+  #somewhat translucent. Color=Null means no outlines only fill. Inf height means they fill the whole graph.
+  scale_fill_manual("Time of Day", values=c("white", "gray90"), 
+                    guide = guide_legend(override.aes = list(alpha = 1 )))+
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed")+
+  #Lets us control what colors the fill are. Also lets us make the legend more intense than the treatment
+  #bars
+  geom_point(size = 0.5)+
+  #makes the points smaller, which is good, because there are a lot of them
+  scale_color_manual("Treatment", 
+                     values = c("black", "#000080", "#FF0000", "#00CD00"))+
+  #Lets us control the point and line color, which is nice
+  geom_smooth(method = lm, formula = y ~ splines::bs(x, 11), se = FALSE)+
+  #Gives us smooth lines with some accounting for cycles
+  #scale_y_continuous(limits = c(-0.1, 0.15))+
+  #makes the scale consistent with other graphs
+    ylab("Net Oxygen Production mg/hr/g")+
+  xlab("Hour of Experiment")+
+  ggtitle("Net Oxygen Production Over Time by Treatment")+
+  theme_bw()
+```
+
+saves our graph, which is useful for the future
+```{r}
+ggsave(dibujo, 
+       filename = "Trial8WeirdRespirometry.png",
+       device = "png")
+```

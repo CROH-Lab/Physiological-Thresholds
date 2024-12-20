@@ -1,0 +1,264 @@
+---
+title: "Trial8Chamber4NoBG"
+author: "Abby Cannon"
+date: "2024-10-09"
+output: html_document
+---
+Bringing in our raw data and the packages we need
+```{r}
+#setwd(" ")
+library(knitr)
+library(ggplot2)
+library(cowplot)
+library(respR)
+library(tidyr)
+raw.data <- read.csv("Trial8Resp.csv") #load raw trial data
+
+#So I don't think we need the background data now, based on the adjustment method we use
+
+# define flush and measure periods
+flush <- 120 # 2 min flush
+wait <- 120   # 2 mins wait
+measure <- 3360  # 56 mins measure
+```
+
+## Data QA/QC
+This chunk is grabbing the columns we need, and changing the column names so that it is in usable form for respR
+```{r}
+#First Enter your Experiment and chamber 
+Trial <- 8 #Experiment labeled to prevent subsequent confustion
+Cham <- 4 #Chamber labeled to prevent subsequent confusion
+
+#Gives us a character based on the chamber we want
+nombre <- paste("CH", Cham, ".O2...", sep = "")
+
+#Makes it into a tibble, which lets us paste things more easily
+datos.crudos <- as_tibble(raw.data)
+
+## to subset: data[x,y] you need the , to make it complete. to leave your X blank while filling in Y means you want all the rows associated with your chosen collumn, and vice-cerse
+coral.resp <- datos.crudos  %>% select(X, starts_with(nombre), Phase, Time, Month, Day, Year) 
+#AutoResp names the columns "CH1.02...air.sat.." in the raw data set, you have to process the data one chamber at a time, this isolates the raw data for Chamber 1
+
+##renaming the columns to use with RespR
+colnames(coral.resp)[2] = "Oxy"
+
+#plots background and trial data for the first chamber
+ggplot(coral.resp, aes(x=X, y=Oxy)) + geom_point()
+```
+Looks somewhat erratic through the experiment and with fewer clear trends.
+
+Gets us only measurements as opposed to flushing and waiting
+```{r}
+#And now something for later matching
+measurement.only <- coral.resp[grep("M", coral.resp$Phase),] #Gets us only the ones that start with M
+measurement.only$Phase <- gsub("M", "", measurement.only$Phase) #Gets rid of the Ms
+#Gives us only the start values of a particular measurement phase
+measurement.first <- measurement.only[match(unique(measurement.only$Phase),
+                                           measurement.only$Phase),]
+```
+
+Now we have to get into some stuff for easier future programming
+```{r}
+#Selects for only the first observation
+
+names(measurement.first)[names(measurement.first) == 'Time'] <- 'Start.Time'
+#Changes the name of the time column for clarity when we ultimately have to put sheets
+#together
+
+names(measurement.first)[names(measurement.first) == 'Phase'] <- 'loop'
+#Gives it the same name as the column in subsequent data = to make later matching possible
+
+measurement.first$loop <- as.numeric(measurement.first$loop) #Makes it numeric, which
+#we'll need for later management
+```
+84 Loops so far.
+
+### Looking at the data
+This is the preliminary view of the entire run of one coral. The default width is 0.1, but you can change that by adding width=X.XX inside the ()
+```{r}
+##We want rate.rev to be false so that production is positive, and consumption is negative
+coral.resp_inspect <- inspect(coral.resp, rate.rev = FALSE)
+#The warning about uneven time can be safely disregarded as it stems from the per minute recording 
+#interval being converted to decimalised hours, and we can see the minimum and maximum 
+#intervals indicate there are no major gaps. 
+
+# This should be similar to the above "test" just with the bump removed, and the width changed 0.2
+
+coral.resp_inspect2 <- inspect(coral.resp, rate.rev = FALSE, width = 0.2)
+
+#Manually subsetting every replicate would be difficult, but since we know they cycle every hour (3600s) 
+#and there are further replicates after the first ends at row XXX, we can use straightforward R syntax to perform a loop.
+```
+```{r}
+
+#so there may be a way to find this programmatically without poking through the data
+#every time
+m.start <- as.numeric(rownames(as.data.frame(coral.resp)[which(as.data.frame(coral.resp)$Phase =="F1   ", arr.ind=TRUE)[1],]))-120
+#Selects for the row where F1 is and subracts 120 from that number
+#But we have to tell it to treat it as a dataframe, not a tibble and I assume there are probably reasons for this
+
+m.end <- as.numeric(rownames(as.data.frame(coral.resp)[which(as.data.frame(coral.resp)$Phase=="M84  ", arr.ind=TRUE)[1],]))
+#Selects for the first row of the last measurement. Unfortunately this will vary by
+#trial
+
+#Goes up by the time
+loops <- seq(m.start, m.end, 3600)
+
+## data starts - apply wait and flush periods
+starts <- loops + wait + flush #I don't think these actually get used
+## data ends - apply wait and flush AND measure periods
+ends <- loops + wait + flush + measure #I don't think these actually get used either
+
+```
+
+### The Loop function
+First we set up an empty list that will store all the rates. The loop function will go through our start times to the end times and find the linear increase/decrease for each cycle. It will store the rate of change (i.e. slopes) into the rmr list
+```{r}
+
+#rates_raw <- calc_rate.int(t10_1, 
+                  #     starts=loops,
+                   #    wait=240,
+                    #   measure=3360,
+                     #  quiet = TRUE,
+                      # legend=TRUE)
+
+
+rates <- calc_rate.int(coral.resp, 
+                       starts=loops,
+                       wait= 240, 
+                       measure=3360,
+                       quiet = TRUE,
+                       legend=TRUE,
+                       pos=c(1:80)) #viewing each cycle's oxygen data
+```
+Still some poorly timed flushes as usual
+
+Now we bring in some data to try to not have to re-program the weights and volumes every
+time
+```{r}
+#First we bring in our data
+coral.data <- read.csv("Phase2CoralPhysiology.csv")
+c <- as.numeric(coral.data$Chamber) #Then we change our character data to numeric
+coral.data$Chamber <- c #And change the column
+
+library(data.table) #The package we need
+
+#Making a data table with Experiment, Chamber, and Wet weight for faster recall
+d.wet.weight <-data.table(
+   Trial = coral.data$Trial,
+    Chamber = coral.data$Chamber,
+    Adj.WW = coral.data$Adj.WW
+)
+setkey(d.wet.weight, Trial, Chamber) #Apparently this is important, but I don't 
+#know why
+
+#Making a function to get the wet weight for from the coral data sheet
+getWW <-function(c1, c2, data=d.wet.weight) {
+    d.wet.weight[.(c1, c2)][, Adj.WW]
+}
+
+#Gets it based on the Experiment and Chamber values we put at the start
+WW <- getWW(Trial, Cham)
+
+#Now the same thing, but for volume
+#Making a data table with Experiment, Chamber, and Volume for faster recall
+d.volume <-data.table(
+   Trial = coral.data$Trial,
+    Chamber = coral.data$Chamber,
+    Adj.Vol = coral.data$Adj..Volume
+)
+setkey(d.volume, Trial, Chamber)
+
+#There might be something fishy with what the volume is being retrieved as
+class(d.volume$Adj.Vol)
+unique(d.volume$Adj.Vol)
+
+#Making a function to get the volume from the data table
+getVol <-function(c1, c2, data=d.volume) {
+    d.volume[.(c1, c2)][, Adj.Vol]
+}
+
+Vol <- getVol(Trial, Cham) #Gives us the value we're looking for
+
+#Now the same, but for ID, which gets us genotype
+d.ID <-data.table(
+   Trial = coral.data$Trial,
+    Chamber = coral.data$Chamber,
+    ID = coral.data$ID
+)
+setkey(d.ID, Trial, Chamber)
+
+getID <-function(c1, c2, data=d.ID) {
+    d.ID[.(c1, c2)][, ID]
+}
+
+ID <- getID(Trial, Cham)
+
+#Now for treatment
+d.Treatment <-data.table(
+   Trial = coral.data$Trial,
+    Chamber = coral.data$Chamber,
+    Treatment = coral.data$Treatment
+)
+setkey(d.Treatment, Trial, Chamber)
+
+getTreatment <-function(c1, c2, data=d.Treatment) {
+    d.Treatment[.(c1, c2)][, Treatment]
+}
+
+Treatment <- getTreatment(Trial, Cham)
+```
+
+Now we convert our rates based on the mass of the coral
+```{r}
+rates_con <- convert_rate(rates, 
+                          oxy.unit = "%Air", 
+                          time.unit = "sec",
+                          output.unit = "mg/h/g",
+                          volume = 603-Vol, #total resp volume - coral volume (the volume of water in the entire recirculating system) 
+                          mass = WW, #wet weight of the coral/organism (make sure to subtract an average weight of a coral plug)
+                          S=35, #salinity
+                          t=30, #temperature
+                          p=1.009)|> #air pressure in hPa
+  select_rate(method = "rsq", n = c(0.0,1)) #selecting for r2 
+```
+```{r}
+summary(rates_con)
+View(rates_con)
+plot(rates_con, type="rate")
+```
+Still looks like we got off to a weird start
+
+Making our graph
+```{r}
+mo2 <- rates_con[["summary"]][['rate.output']]
+mo2
+loop <- rates_con[["summary"]][['rep']]
+data_c1 <- data.frame(loop, mo2)
+
+ggplot(data_c1, aes(x=loop, y=mo2)) + geom_point() + theme_classic() +
+  ggtitle("OFAV Trial 8 Chamber 4") + geom_hline(aes(yintercept=0)) +
+  labs(x="Loops", y=expression(MO[2]~(mgO[2]~kg^-1~h^-1))) 
+```
+Still bizarre
+
+```{r}
+#Bringing in the old data
+old.results <- read.csv("Trial8Results.csv")
+
+#There may be a cheeky way to rename our data and merge it
+colnames(data_c1) = c("Cycle", "MO2 no Background Correction")
+
+#But the old results have multiple chambers, so we'll need to add that to our background data
+data_c1$Chamber <- rep(Cham)
+
+#Now we put them together, which should keep the information we need
+corrected.data <- merge(data_c1, old.results, by = c("Cycle", "Chamber"))
+
+corrected.data$Trial <- rep(Trial) #We'll need this when we put it all together
+
+#Write a csv of our data. We'll put them all together later
+#write.csv(corrected.data, "Trial8Chamber4NoBG.csv")
+#After we adjust the rates by more correct value
+```
+
