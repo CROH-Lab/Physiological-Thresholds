@@ -1,0 +1,91 @@
+---
+title: "GNET Phase 2"
+author: "Abby Cannon"
+date: "2024-11-19"
+output: html_document
+---
+
+```{r}
+datos <- read.csv("GNET_Phase2.csv") #bring in our data
+```
+
+So we'll have to put in the trial combinations
+```{r}
+genes <- read.csv("TrialandGenotypes.csv") #another csv
+```
+
+And now we put them together
+```{r}
+datos2 <- merge(genes, datos, by = "Genotype")
+```
+
+And now let's get rid of the random x
+```{r}
+datos3 <- subset(datos2, select=-c(X))
+```
+
+Now let's find out what kind of data we have
+```{r}
+class(datos3$Trial) #integer
+class(datos3$Day) #integer
+class(datos3$Colletion.Time) #character and that's a problem. It also has a 
+#typo in the column name so I may need to rename it for the sake of my sanity 
+#and faster programming
+```
+
+So let's start with the renaming
+```{r}
+names(datos3)[names(datos3) == 'Colletion.Time'] <- 'Collection.time'
+```
+
+Now we make it the kind of data we need to be
+So we try to fix collection time
+```{r}
+hora <- format(as.POSIXlt(datos3$Collection.time, format="%H:%M:%OS"),"%H:%M:%OS2") #So that worked even if it gave us more 
+#precision than we strictly need
+datos3$Collection.time <- hora
+```
+
+Now let's work on our turbidity (currently called treatment). We can start by renaming for the sake of our sanity
+```{r}
+names(datos3)[names(datos3) == 'Treatment'] <- 'Target.NTU'
+```
+
+And now let's check what kind of data we have for it and temperature
+```{r}
+class(datos3$Target.NTU) #Integer. Works.
+class(datos3$Temperature) #Also integer. Also works.
+```
+
+Now we need to make an ID column to account for random effects of chamber/treatment combinations
+```{r}
+datos3$ID <- paste(datos3$Trial, datos3$Chamber, sep = "-")
+datos3$ID <- as.factor(datos3$ID) #Need to make it a factor for subsequent
+#analysis
+```
+
+Alright. I think now we can do some Bayesian analysis.
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(GNET ~ Day * Collection.time * 
+                            Target.NTU * Temperature + ID,
+                          data = datos3, whichRandom = "ID", neverExclude="^ID$")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+What happens when we plot it?
+```{r}
+plot(bayes_rm)
+```
+
+So ID is [167] ID  : 0.1674266    ±0% Target NTU + ID is the most likely model that includes a variable and it's 0.03566071, which is less likely so we're done here.
+
