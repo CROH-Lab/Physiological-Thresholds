@@ -1,0 +1,144 @@
+---
+title: "FV.FmBayesianLinearModelAfter"
+author: "Abby Cannon"
+date: "2024-10-30"
+output: html_document
+---
+
+First we bring in our data
+```{r}
+datos <- read.csv("ETRmTreatmentDays.csv")
+```
+
+Then we select for only the After data
+```{r}
+after.datos <- datos[ which(datos$Days.Post.Experiment == 0), ]
+```
+
+Then we account for temperature and turbidity and make them numeric
+```{r}
+after.datos$Temperature <- after.datos$Treatment
+class(after.datos$Temperature) #Already character
+#So now we can make some substitutions to get it what it needs to be
+unique(after.datos$Temperature) #Figuring our what we're actually substituting
+#"Control"            "High NTU"           "High Temp"          "High Temp High NTU"
+
+#Now we make the substitutions
+after.datos$Temperature <- gsub("High Temp High NTU", "30", after.datos$Temperature)
+#And we have to do high temp high NTU first, because it has the names of others in it
+after.datos$Temperature <- gsub("Control", "27", after.datos$Temperature)
+after.datos$Temperature <- gsub("High NTU", "27", after.datos$Temperature)
+after.datos$Temperature <- gsub("High Temp", "30", after.datos$Temperature)
+
+#Now we make it numeric
+temperatura <- as.numeric(after.datos$Temperature)
+
+#And then we put it back in our data frame
+after.datos$Temperature <- temperatura
+```
+
+And now we'll have to do something very similar for turbidity
+```{r}
+after.datos$Turbidity <- after.datos$Treatment
+
+#Now we make the substitutions
+after.datos$Turbidity <- gsub("High Temp High NTU", "29", after.datos$Turbidity)
+#And we have to do high temp high NTU first, because it has the names of others in it
+after.datos$Turbidity <- gsub("Control", "0", after.datos$Turbidity)
+after.datos$Turbidity <- gsub("High NTU", "29", after.datos$Turbidity)
+after.datos$Turbidity <- gsub("High Temp", "0", after.datos$Turbidity)
+
+#Now we make it numeric
+turbidez <- as.numeric(after.datos$Turbidity)
+
+#And then we put it back in our data frame
+after.datos$Turbidity <- turbidez
+```
+
+And now that we know that the replicates are of the same coral fragment, we should put them together to avoid pseudoreplication
+```{r}
+fluoro <- aggregate(Fv.Fm ~ Coral.ID + Temperature + Turbidity + Genotype +
+                    Treatment, data = after.datos, mean)
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+And we should probably also consider Genotype as a potential factor to avoid pseudoreplication
+```{r}
+#And it needs to be a factor
+fluoro$Genotype <- as.factor(fluoro$Genotype)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(Fv.Fm ~ Temperature * Turbidity + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+
+```{r}
+plot(bayes_rm)
+```
+
+```{r}
+#Gets every model diveded by evey other model
+bfmat <- bayes_rm/bayes_rm
+look.at.this <- bfmat[,5] #Prints out the 19th column, which should show everything divided by ID
+
+look.at.this
+```
+Everybody is less likely than genotype, but we'll still have to graph it for comparison purposes
+
+Now we make our graph to show there's no difference
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+#And then we make our graph
+p2 <- ggplot(fluoro, aes(x = Temperature, y = Fv.Fm, label = Genotype))+
+  geom_flat_violin(data= fluoro, aes(x= Temperature, 
+                                          y = Fv.Fm, 
+                                        fill = Treatment), 
+                   position = position_nudge(x = 0, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_text_repel(aes(x= Temperature, y = Fv.Fm, 
+                                    colour = Treatment), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "#000080", "#FF0000", "#00CD00"))+
+  scale_fill_manual(values = c("black", "#000080", "#FF0000", "#00CD00"))+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  ylim(0.62, 0.725)+
+  scale_x_continuous(breaks = c(27, 30), labels = c(27, 30), 
+                     limits = c(25.5, 31.5))+
+  labs(fill = "Treatment")+
+  xlab("Temperature (ºC)")+
+  ylab("Fv/Fm")+
+  ggtitle("Fv/Fm by Treatment")
+
+p2
+```
+
+
+saves our graph, which is useful for the future
+```{r}
+ggsave(p2, 
+       filename = "Fv.FMPhase2AfterTreatment.png",
+       device = "png")
+```

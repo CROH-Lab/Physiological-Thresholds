@@ -1,0 +1,75 @@
+---
+title: "PAM Turbidity x Heat 11June2024"
+author: "Abby"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+```
+
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_FDEP(Recovery P2)11Jun2024.csv")
+
+#Looks good, but we need to get rid of the sacrifices
+class(datos$Treatment) #Character
+unique(datos$Treatment)
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#Now we have to do some subsituting for consistency with other plots
+class(datos.no.sac$Treatment) #Character
+unique(datos.no.sac$Treatment) #"NT" "T"  "0"  "N"
+
+#We also need to re-name our treatments for consistency with other graphs
+datos.no.sac$Treatment <- sub("0", "Control", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("NT", "high temp high ntu", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("N", "high ntu", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("T", "high temp", datos.no.sac$Treatment)
+
+
+#And we have to do this in multiple steps to prevent replacement in the middle of words
+datos.no.sac$Treatment <- sub("high", "High", datos.no.sac$Treatment)
+#Apparently this only replaces the first "high" in each string, but we can fix that later
+#Remember, it's only stupid if it doesn't work
+datos.no.sac$Treatment <- sub("temp", "Temp", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("high ntu", "High NTU", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("ntu", "NTU", datos.no.sac$Treatment)
+
+#Now we need to make our days more quantitative
+dias <- read.csv("RecoveryPhaseDays.csv")
+
+datos.days <- merge(datos.no.sac, dias, by = "Recovery.Phase")
+
+#But first we need some stats
+library(Rmisc)
+
+#How we calculate
+PAM.stats = summarySE(datos.days, measurevar="Fv.Fm", 
+                            groupvars = c("Days.Post.Experiment", "Treatment"))
+
+#And now we plot what we calculated
+#Plot Thalassia
+library(ggplot2)
+library(ggpubr)
+p1 <- ggplot(PAM.stats, aes(x=Days.Post.Experiment, y=Fv.Fm, colour=Treatment)) + 
+  geom_pointrange(aes(ymin = Fv.Fm - se, ymax = Fv.Fm + se))+
+ scale_color_manual(values = c("black", "#000080", "#FF0000", "#00CD00"),
+                     name = "Treatment")+
+  geom_line(size = 1)+
+  geom_point()+
+  ylim(0.2, 0.8)+
+  scale_x_continuous(breaks=c(-4, 0, 28, 49, 70, 91))+
+  xlab("Time in Days Post Experiment")+
+  ylab("Fv/Fm")+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  ggtitle("Fv/Fm of by Treatment Over Time")
+
+p1
+```

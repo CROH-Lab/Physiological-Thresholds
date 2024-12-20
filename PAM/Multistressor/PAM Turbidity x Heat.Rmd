@@ -1,0 +1,78 @@
+---
+title: "Turbidity x Temperature Fv/Fm"
+author: "Abby"
+date: "2024-05-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_FDEP(Recovery P2).csv")
+
+#so let's get rid of NAs
+
+#and we need to bring in a package for this
+library(tidyr)
+
+#And how we get rid of our empty rows
+datos.no.blank <- datos %>% drop_na(Genotype)
+
+#And our sacrifice treatments
+datos.no.sac <- datos.no.blank[ which(datos.no.blank$Treatment != "x"), ]
+
+#Now we have to do some subsituting for consistency with other plots
+class(datos.no.sac$Treatment) #Character
+unique(datos.no.sac$Treatment) #"NT" "T"  "0"  "N"
+
+#We also need to re-name our treatments for consistency with other graphs
+datos.no.sac$Treatment <- sub("0", "Control", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("NT", "high temp high ntu", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("N", "high ntu", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("T", "high temp", datos.no.sac$Treatment)
+
+
+#And we have to do this in multiple steps to prevent replacement in the middle of words
+datos.no.sac$Treatment <- sub("high", "High", datos.no.sac$Treatment)
+#Apparently this only replaces the first "high" in each string, but we can fix that later
+#Remember, it's only stupid if it doesn't work
+datos.no.sac$Treatment <- sub("temp", "Temp", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("high ntu", "High NTU", datos.no.sac$Treatment)
+datos.no.sac$Treatment <- sub("ntu", "NTU", datos.no.sac$Treatment)
+
+
+#For clear planning we may want to do some renaming
+datos.no.sac$Recovery.Phase <- sub("a", "Pre-Ex", datos.no.sac$Recovery.Phase)
+
+#Also for plotting reasons we may need to make a new column with recovery phase as a factor
+datos.no.sac$F.Recovery.Phase <- as.factor(datos.no.sac$Recovery.Phase)
+unique(datos.no.sac$F.Recovery.Phase)
+
+datos.no.sac$F.Recovery.Phase <- factor(datos.no.sac$F.Recovery.Phase, 
+                                        levels = c("Pre-Ex", "0", "1", "2", "3", "4"))
+
+unique(datos.no.sac$F.Recovery.Phase) #Got it ordered how we want it
+
+#Let's plot our data
+library(ggplot2)
+p2 <- ggplot(datos.no.sac, aes(x= Treatment, y=Fv.Fm, color =Treatment)) + 
+  scale_color_manual(values = c("black", "#000080", "#FF0000", "#00CD00"),
+                     name = "Treatment")+
+    geom_boxplot() +
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    facet_wrap(~F.Recovery.Phase, nrow = 1, scale="fixed")+
+  theme(strip.background=element_rect(colour="black",
+                                    fill="white"))+
+  ylim(0.2, 0.8)+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  xlab("")+
+  ylab("Fv/Fm")+
+  ggtitle("Fv/Fm of Treatments Grouped by Recovery Phase")
+
+p2
+```

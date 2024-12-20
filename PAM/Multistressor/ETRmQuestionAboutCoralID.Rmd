@@ -1,0 +1,120 @@
+---
+title: "ETRmBayesianLinearModelAfter"
+author: "Abby Cannon"
+date: "2024-10-30"
+output: html_document
+---
+
+First we bring in our data
+```{r}
+datos <- read.csv("ETRmTreatmentDays.csv")
+```
+
+Then we select for only the After data
+```{r}
+after.datos <- datos[ which(datos$Days.Post.Experiment == 0), ]
+```
+
+Then we account for temperature and turbidity and make them numeric
+```{r}
+after.datos$Temperature <- after.datos$Treatment
+class(after.datos$Temperature) #Already character
+#So now we can make some substitutions to get it what it needs to be
+unique(after.datos$Temperature) #Figuring our what we're actually substituting
+#"Control"            "High NTU"           "High Temp"          "High Temp High NTU"
+
+#Now we make the substitutions
+after.datos$Temperature <- gsub("High Temp High NTU", "30", after.datos$Temperature)
+#And we have to do high temp high NTU first, because it has the names of others in it
+after.datos$Temperature <- gsub("Control", "27", after.datos$Temperature)
+after.datos$Temperature <- gsub("High NTU", "27", after.datos$Temperature)
+after.datos$Temperature <- gsub("High Temp", "30", after.datos$Temperature)
+
+#Now we make it numeric
+temperatura <- as.numeric(after.datos$Temperature)
+
+#And then we put it back in our data frame
+after.datos$Temperature <- temperatura
+```
+
+And now we'll have to do something very similar for turbidity
+```{r}
+after.datos$Turbidity <- after.datos$Treatment
+
+#Now we make the substitutions
+after.datos$Turbidity <- gsub("High Temp High NTU", "29", after.datos$Turbidity)
+#And we have to do high temp high NTU first, because it has the names of others in it
+after.datos$Turbidity <- gsub("Control", "0", after.datos$Turbidity)
+after.datos$Turbidity <- gsub("High NTU", "29", after.datos$Turbidity)
+after.datos$Turbidity <- gsub("High Temp", "0", after.datos$Turbidity)
+
+#Now we make it numeric
+turbidez <- as.numeric(after.datos$Turbidity)
+
+#And then we put it back in our data frame
+after.datos$Turbidity <- turbidez
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+We'll also need to make an ID for all of the corals to separate out the random noise
+```{r}
+#And now for this to work we're going to need an ID column
+after.datos$ID <- paste(after.datos$Coral.ID, after.datos$Replicate, sep = "-")
+#And it needs to be a factor
+after.datos$ID <- as.factor(after.datos$ID)
+```
+
+And we should probably also consider Coral.ID as a potential factor to avoid pseudoreplication
+```{r}
+#And it needs to be a factor
+after.datos$Coral.ID <- as.factor(after.datos$Coral.ID)
+```
+Although I think there aren't enough observations to include it.
+
+There's something fishy going on with our data and I'm trying to figure it out.
+```{r}
+class(after.datos$ETRm) #It's numeric so that's not the problem
+```
+
+Maybe out ID got weird
+```{r}
+X.factor <- as.factor(after.datos$X)
+after.datos$X <- X.factor
+```
+That is not the problem
+
+Maybe we can try it with the categories as factors and see if that improves anything
+```{r}
+#after.datos$Temperature <- as.factor(after.datos$Temperature)
+#after.datos$Turbidity <- as.factor(after.datos$Turbidity)
+```
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(ETRm ~ Temperature * Turbidity + Coral.ID,
+                          data = after.datos, whichRandom = "Coral.ID", neverExclude = "^Coral.ID$")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+```{r}
+plot(bayes_rm)
+```
+So how much more likely than coral ID are we really?
+Now we get a matrix of the models to see how much more likely this is than just ID
+```{r}
+#Gets every model diveded by evey other model
+bfmat <- bayes_rm/bayes_rm
+
+look.at.this <- bfmat[,5] #Prints out the 19th column, which should show everything divided by Coral.ID
+
+look.at.this
+```

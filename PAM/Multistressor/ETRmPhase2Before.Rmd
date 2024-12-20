@@ -1,0 +1,94 @@
+---
+title: "ETRm Phase 2 Before"
+author: "Abby Cannon"
+date: "2024-11-01"
+output: html_document
+---
+
+First we bring in our data
+```{r}
+datos <- read.csv("ETRmTreatmentDays.csv")
+```
+
+Then we select for only the Before data
+```{r}
+before.datos <- datos[ which(datos$Days.Post.Experiment == -4), ]
+```
+
+Then we account for temperature and turbidity and make them numeric
+```{r}
+before.datos$Temperature <- before.datos$Treatment
+class(before.datos$Temperature) #Already character
+#So now we can make some substitutions to get it what it needs to be
+unique(before.datos$Temperature) #Figuring our what we're actually substituting
+#"Control"            "High NTU"           "High Temp"          "High Temp High NTU"
+
+#Now we make the substitutions
+before.datos$Temperature <- gsub("High Temp High NTU", "30", before.datos$Temperature)
+#And we have to do high temp high NTU first, because it has the names of others in it
+before.datos$Temperature <- gsub("Control", "27", before.datos$Temperature)
+before.datos$Temperature <- gsub("High NTU", "27", before.datos$Temperature)
+before.datos$Temperature <- gsub("High Temp", "30", before.datos$Temperature)
+
+#Now we make it numeric
+temperatura <- as.numeric(before.datos$Temperature)
+
+#And then we put it back in our data frame
+before.datos$Temperature <- temperatura
+```
+
+And now we'll have to do something very similar for turbidity
+```{r}
+before.datos$Turbidity <- before.datos$Treatment
+
+#Now we make the substitutions
+before.datos$Turbidity <- gsub("High Temp High NTU", "29", before.datos$Turbidity)
+#And we have to do high temp high NTU first, because it has the names of others in it
+before.datos$Turbidity <- gsub("Control", "0", before.datos$Turbidity)
+before.datos$Turbidity <- gsub("High NTU", "29", before.datos$Turbidity)
+before.datos$Turbidity <- gsub("High Temp", "0", before.datos$Turbidity)
+
+#Now we make it numeric
+turbidez <- as.numeric(before.datos$Turbidity)
+
+#And then we put it back in our data frame
+before.datos$Turbidity <- turbidez
+```
+
+And now that we know that the replicates are of the same coral fragment, we should put them together to avoid pseudoreplication
+```{r}
+fluoro <- aggregate(ETRm ~ Coral.ID + Temperature + Turbidity + Genotype, 
+                    data = before.datos, mean)
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+And we should probably also consider Genotype as a potential factor to avoid pseudoreplication
+```{r}
+#And it needs to be a factor
+fluoro$Genotype <- as.factor(fluoro$Genotype)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(ETRm ~ Temperature * Turbidity + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+```{r}
+plot(bayes_rm)
+```
+Random effects of genotype are the most likely. Thank goodness.
+
+
