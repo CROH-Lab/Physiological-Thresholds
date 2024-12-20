@@ -1,0 +1,39 @@
+---
+title: "Trial6AllChambersTogether"
+author: "Abby"
+date: "2024-08-15"
+output: html_document
+---
+
+First we bring in all our data
+```{r}
+uno <-read.csv("Trial6Chamber1NoBG.csv")
+dos <-read.csv("Trial6Chamber2NoBG.csv")
+tres <-read.csv("Trial6Chamber3NoBG.csv")
+cuatro <-read.csv("Trial6Chamber4NoBG.csv")
+cinco <-read.csv("Trial6Chamber5NoBG.csv")
+seis <-read.csv("Trial6Chamber6NoBG.csv")
+siete <-read.csv("Trial6Chamber7NoBG.csv")
+ocho <-read.csv("Trial6Chamber8NoBG.csv")
+```
+
+Then we account for some of our dataframes having too many columns
+```{r}
+colnames(siete) #Finding out what we're working with
+
+#Dropping the empty colums
+siete <- subset(siete, select=-c(NA..1, NA..2))
+uno <- subset(uno, select=-c(NA..1, NA..2))
+```
+
+Now we put them together
+```{r}
+library(dplyr) #package we will need for this
+
+#row binds multiple data frames at once, which is convenient
+datos <- bind_rows(uno, dos, tres, cuatro, cinco, seis, siete, ocho)
+
+datos$Trial <- rep(6) #Adds a trial ID, which we'll need when we put everything together
+
+write.csv(datos, "Trial6NoBG.csv")
+```
