@@ -1,0 +1,238 @@
+---
+title: "ETRm After Experiment Phase 1"
+author: "Abby Cannon"
+date: "2024-11-01"
+output: html_document
+---
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_P1_11Jun2024.csv")
+
+#Looks good, but we need to get rid of the sacrifices
+class(datos$Treatment) #Character
+unique(datos$Treatment) #We need to get rid of "x" 
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#Now we need to make our days more quantitative
+dias <- read.csv("RecoveryPhaseDays.csv")
+
+datos.days <- merge(datos.no.sac, dias, by = "Recovery.Phase")
+```
+
+Then we select for only the After data
+```{r}
+after.datos <- datos.days[ which(datos.days$Days.Post.Experiment == 0), ]
+```
+
+We might be able to leave treatment as is, depending on how it's classified
+```{r}
+class(after.datos$Treatment) #It's character. That's a problem.
+Treatment <- as.numeric(after.datos$Treatment) #That's how we fix it
+after.datos$Treatment <- Treatment
+```
+
+And now that we know that the replicates are of the same coral fragment, we should put them together to avoid pseudoreplication
+```{r}
+fluoro <- aggregate(ETRm ~ Coral.ID + Treatment + Genotype, 
+                    data = after.datos, mean)
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+And we should probably also consider Genotype as a potential factor to avoid pseudoreplication
+```{r}
+#And it needs to be a factor
+fluoro$Genotype <- as.factor(fluoro$Genotype)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(ETRm ~ Treatment + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm
+```
+
+```{r}
+plot(bayes_rm)
+```
+
+Okay. Very similar
+
+```{r}
+#Gets every model diveded by evey other model
+bfmat <- bayes_rm/bayes_rm
+look.at.this <- bfmat[,2] #Prints out the 19th column, which should show everything divided by ID
+
+look.at.this
+```
+I really don't find that compelling. Maybe we'll see what it looks like pre too.
+It is more likely than pre, so I guess we can see what we got.
+It is technically more likely than pre, but way too close to equal.
+
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+#And then we make our graph
+p2 <- ggplot(fluoro, aes(x = Treatment, y = ETRm, label = Genotype))+
+  geom_flat_violin(data= fluoro, aes(x=Treatment, 
+                                          y = ETRm, 
+                                        fill = factor(Treatment)), 
+                   position = position_nudge(x = 0, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_text_repel(aes(x=Treatment, y = ETRm, 
+                                    colour = factor(Treatment)), 
+                  nudge_x = -0.5, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  scale_fill_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"), 
+                    name = "Turbidity (NTU)" )+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  ylim(60, 170)+
+  scale_x_continuous(breaks=c(0, 15, 29, 50), limits = c(-1, 57))+
+  labs(fill = "Turbidity (NTU)")+
+  xlab("Chamber Turbidity (NTU)")+
+  ylab("ETRm")+
+  ggtitle("ETRm By Turbidity Treatment")
+
+p2
+```
+There might be another way to look at this
+```{r}
+#And there's probably an elegant solution with ifelse, but we can also do it with #gsub
+fluoro$At.or.Below.Legal.Threshold <- fluoro$Treatment
+fluoro$At.or.Below.Legal.Threshold <- as.character(fluoro$At.or.Below.Legal.Threshold) #Make it character
+
+#Now we make our substitutions
+fluoro$At.or.Below.Legal.Threshold <- gsub("50", "No", fluoro$At.or.Below.Legal.Threshold) #And we do 50 first to avoid problems with
+#zeros
+fluoro$At.or.Below.Legal.Threshold <- gsub("0", "Yes", fluoro$At.or.Below.Legal.Threshold)
+fluoro$At.or.Below.Legal.Threshold <- gsub("15", "Yes", fluoro$At.or.Below.Legal.Threshold)
+fluoro$At.or.Below.Legal.Threshold <- gsub("29", "Yes", fluoro$At.or.Below.Legal.Threshold)
+
+#Now we make it a factor
+fluoro$At.or.Below.Legal.Threshold <- 
+  as.factor(fluoro$At.or.Below.Legal.Threshold)
+```
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm.factor <- generalTestBF(ETRm ~ At.or.Below.Legal.Threshold + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm.factor
+```
+I don't think this is more likely, but let's plot it to be sure
+```{r}
+plot(bayes_rm.factor)
+```
+Alright. Less likely than just genotype.
+
+There might be one last way to do this
+```{r}
+#And there's probably an elegant solution with ifelse, but we can also do it with #gsub
+fluoro$At.or.Above.Legal.Threshold <- fluoro$Treatment
+fluoro$At.or.Above.Legal.Threshold <- as.character(fluoro$At.or.Above.Legal.Threshold) #Make it character
+
+#Now we make our substitutions
+fluoro$At.or.Above.Legal.Threshold <- gsub("50", "Yes", fluoro$At.or.Above.Legal.Threshold) #And we do 50 first to avoid problems with
+#zeros
+fluoro$At.or.Above.Legal.Threshold <- gsub("0", "No", fluoro$At.or.Above.Legal.Threshold)
+fluoro$At.or.Above.Legal.Threshold <- gsub("15", "No", fluoro$At.or.Above.Legal.Threshold)
+fluoro$At.or.Above.Legal.Threshold <- gsub("29", "Yes", fluoro$At.or.Above.Legal.Threshold)
+
+#Now we make it a factor
+fluoro$At.or.Above.Legal.Threshold <- 
+  as.factor(fluoro$At.or.Above.Legal.Threshold)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm.high <- generalTestBF(ETRm ~ At.or.Above.Legal.Threshold + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+Prints out our model and tells us what's good.
+```{r}
+bayes_rm.high
+```
+I don't think this is more likely, but let's plot it to be sure
+```{r}
+plot(bayes_rm.high)
+```
+Hoo boy
+```{r}
+#Gets every model diveded by evey other model
+bfmat <- bayes_rm.high/bayes_rm.high
+look.at.this <- bfmat[,2] #Prints out the 19th column, which should show everything divided by ID
+
+look.at.this
+```
+1.32 times as likely. This feels like the Bayesian equivalent of p-hacking, but here we are.
+
+And I guess we try to do something 'clever' with the graph
+```{r}
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+
+#And then we make our graph
+p2 <- ggplot(fluoro, aes(x = At.or.Above.Legal.Threshold, y = ETRm, label = Genotype))+
+  geom_flat_violin(data= fluoro, aes(x= At.or.Above.Legal.Threshold, 
+                                          y = ETRm, 
+                                        fill = factor(Treatment)), 
+                   position = position_nudge(x = 0, y = 0), adjust = 1.5, trim = TRUE, alpha = .5, colour = NA)+
+  geom_text_repel(aes(x= At.or.Above.Legal.Threshold, y = ETRm, 
+                                    colour = factor(Treatment)), 
+                  nudge_x = -0.3, show.legend = FALSE)+
+  scale_color_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  scale_fill_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"))+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  ylim(50, 170)+
+  labs(fill = "Target NTU")+
+  xlab("Turbidity Level")+
+  scale_x_discrete(labels = c(No = "Less than 29", Yes = "29 or Greater"))+
+  ylab("ETRm (μmol electrons/m^2/s)")+
+  ggtitle("ETRm By Turbidity Levels")
+
+p2
+```
+
+saves our graph, which is useful for the future
+```{r}
+ggsave(p2, 
+       filename = "ETRmPhase1AfterBetterLabelsBetterAxes.png",
+       device = "png")
+```
+

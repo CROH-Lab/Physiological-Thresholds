@@ -1,0 +1,67 @@
+---
+title: "YNPQ After Experiment"
+author: "Abby Cannon"
+date: "2024-11-07"
+output: html_document
+---
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_P1_11Jun2024.csv")
+
+#Looks good, but we need to get rid of the sacrifices
+class(datos$Treatment) #Character
+unique(datos$Treatment) #We need to get rid of "x" 
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#Now we need to make our days more quantitative
+dias <- read.csv("RecoveryPhaseDays.csv")
+
+datos.days <- merge(datos.no.sac, dias, by = "Recovery.Phase")
+```
+
+Then we select for only the After data
+```{r}
+after.datos <- datos.days[ which(datos.days$Days.Post.Experiment == 0), ]
+```
+
+We might be able to leave treatment as is, depending on how it's classified
+```{r}
+class(after.datos$Treatment) #It's character. That's a problem.
+Treatment <- as.numeric(after.datos$Treatment) #That's how we fix it
+after.datos$Treatment <- Treatment
+```
+
+And now that we know that the replicates are of the same coral fragment, we should put them together to avoid pseudoreplication
+```{r}
+fluoro <- aggregate(Y.NPQ. ~ Coral.ID + Treatment + Genotype, 
+                    data = after.datos, mean)
+```
+
+Now it's time to start playing with data
+```{r}
+# Load packages
+library(BayesFactor) # needed to calculate Bayes factors
+library(here) # needed to assign working directory for relative paths 
+```
+
+And we should probably also consider Genotype as a potential factor to avoid pseudoreplication
+```{r}
+#And it needs to be a factor
+fluoro$Genotype <- as.factor(fluoro$Genotype)
+```
+
+
+```{r}
+#So now we make our Bayesian Models
+bayes_rm <- generalTestBF(Y.NPQ. ~ Treatment + Genotype, 
+                          data = fluoro, whichRandom = "Genotype", 
+                          neverExclude = "Genotype")
+```
+
+```{r}
+bayes_rm
+```
+

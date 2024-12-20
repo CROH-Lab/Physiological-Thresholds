@@ -1,0 +1,49 @@
+---
+title: "PAM Threshold O. faveolata"
+author: "Abby"
+date: "2024-05-28"
+output: html_document
+---
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_FDEP(Recovery P1).csv")
+
+#Looks good, but we need to get rid of the sacrifices
+class(datos$Treatment) #Character
+unique(datos$Treatment) #We need to get rid of "x" 
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#For clear planning we may want to do some renaming
+datos.no.sac$Recovery.Phase <- sub("a", "Pre-Ex", datos.no.sac$Recovery.Phase)
+
+#Also for plotting reasons we may need to make a new column with recovery phase as a factor
+datos.no.sac$F.Recovery.Phase <- as.factor(datos.no.sac$Recovery.Phase)
+unique(datos.no.sac$F.Recovery.Phase)
+#We want "Pre-Experiment" to show up first in the plot and it's last in the factor, so 
+#we need to re-order
+datos.no.sac$F.Recovery.Phase <- factor(datos.no.sac$F.Recovery.Phase, 
+                                        levels = c("Pre-Ex", "0", "1", "2", "3", "4"))
+
+unique(datos.no.sac$F.Recovery.Phase) #Now ordered how we want it
+
+#Let's plot our data
+library(ggplot2)
+p2 <- ggplot(datos.no.sac, aes(x= Treatment, y=Fv.Fm, color =Treatment)) + 
+  scale_color_manual(values = c("black", "#1E90FF", "#000080", "#881B1B"),
+                     name = "Turbidity NTU")+
+    geom_boxplot() +
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+    facet_wrap(~F.Recovery.Phase, nrow = 1, scale="fixed")+
+  theme(strip.background=element_rect(colour="black",
+                                    fill="white"))+
+  ylim(0.2, 0.8)+
+  xlab("")+
+  ylab("Fv/Fm")+
+  ggtitle("Fv/Fm of Turbidity Treatments Grouped by Recovery Phase")
+
+p2
+
+```

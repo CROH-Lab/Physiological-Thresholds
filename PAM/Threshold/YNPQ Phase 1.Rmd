@@ -1,0 +1,114 @@
+---
+title: "Phase 1 YNPQ"
+author: "Abby"
+date: "2024-06-22"
+output: html_document
+---
+
+```{r}
+#Let's bring in our data
+datos <- read.csv("OFAV_PAM_P1_11Jun2024.csv")
+
+#Looks good, but we need to get rid of the sacrifices
+class(datos$Treatment) #Character
+unique(datos$Treatment) #We need to get rid of "x" 
+
+#Making a new dataframe without the sacrifice treatments
+datos.no.sac <- datos[ which(datos$Treatment != "x"), ]
+
+#Now we need to make our days more quantitative
+dias <- read.csv("RecoveryPhaseDays.csv")
+
+datos.days <- merge(datos.no.sac, dias, by = "Recovery.Phase")
+
+#So let's make a ggplot with error bars like we've done frequently before.
+```
+
+```{r}
+#So now we want before the experimental treatments interfered with anything
+principio <- datos.no.sac[ which(datos.no.sac$Recovery.Phase == "a"), ]
+
+#So now I think we can graph it
+#And now let's make our graph
+#And I guess we need to bring these in if we want the thing to work
+source("R_rainclouds.R") #With the sources we need to copy them into the same project for unfortunate reasons
+source("summarySE.R") #With the sources we need to copy them into the same project for unfortunate reasons
+library(cowplot)
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+p1 <- ggplot(principio, aes(x=as.character(Genotype), y = Y.NPQ., color = as.character(Genotype)))+
+  geom_flat_violin(position = position_nudge(x = .25, y = 0),adjust =2, trim = FALSE, )+
+  geom_point(position = position_jitter(width = .15), size = .25)+
+  #geom_hline(yintercept = 0, color = "black", linetype = "dashed")+
+  #Keeps the points from invisible-izing the boxplot
+  geom_boxplot(aes(x =as.character(Genotype) , y = Y.NPQ.),outlier.shape = NA, alpha = 0.3, width = .1) +
+  #scale_y_continuous(limits = c(-0.1, 0.15))+
+  #theme_cowplot()+
+  theme(panel.background = element_rect(fill = "white", colour = "black"))+
+  xlab("Genotype")+
+  ylab("YNPQ")+
+  ggtitle("YNPQ by Genotype Phase 2")
+
+p1
+
+#Might be a case for 90 being consistently high, but might not
+
+```
+
+
+```{r}
+#Now we try for ANOVA or Kruskall-Wallis
+res_aov <- aov(Y.NPQ. ~ as.factor(Genotype),
+  data = principio
+)
+
+#Making some plots to visualize
+par(mfrow = c(1, 2)) # combine plots
+
+# histogram
+hist(res_aov$residuals)
+
+# QQ-plot
+library(car)
+
+qqPlot(res_aov$residuals,
+  id = FALSE # id = FALSE to remove point identification
+)
+
+#Might be acceptable
+
+#We'll test it too
+shapiro.test(res_aov$residuals) #p-value = 0.1376
+
+#Normal
+
+leveneTest(Y.NPQ.~ as.factor(Genotype), data = principio) #But not homogenous
+
+#So let's try a Kruskal test instead
+kruskal.test(Y.NPQ.~ as.factor(Genotype), data = principio)
+#Kruskall-Wallis p-value = 2.786e-07
+
+library(FSA)
+
+dunnTest(Y.NPQ. ~ as.factor(Genotype),
+         data=principio,
+         method="bonferroni")
+
+#101 significantly different from 60
+#50 significantly different from 60
+#50 and 101 not significantly different from each other
+#101 different from 67
+#50 different from 67
+#101 different from 80
+#50 different from 80
+#60 different from 97
+#67 different from 97
+#80 different from 97
+#90 overlaps everybody
+#101 overlaps 97
+#50 overlaps 97
+
+
+```
