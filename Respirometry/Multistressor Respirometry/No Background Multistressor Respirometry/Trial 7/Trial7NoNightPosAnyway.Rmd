@@ -1,0 +1,33 @@
+---
+title: "OffsetfromNightMaxPosOnly"
+author: "Abby Cannon"
+date: "2024-10-18"
+output: html_document
+---
+Let's start by bringing in our data
+```{r}
+datos <- read.csv("Trial7NoBG.csv")
+```
+
+Now let's get just our night data
+```{r}
+class(datos$Time.of.Day) #It's character
+#And let's check to make sure there are only 2 categories
+unique(datos$Time.of.Day) #Only day and night so we're perfect
+noche <- datos[ which(datos$Time.of.Day == "night"), ]
+dia <- datos[ which(datos$Time.of.Day == "day"), ]
+
+#And now we check that dia didn't end up with any hours it shouldn't
+unique(dia$Hour) #This one also appears not to be the problem.
+```
+
+Let's get the nighttime maxima for each chamber
+```{r}
+library(dplyr) #The package we need to find max by chamber
+
+#Getting our new data
+night.max <- noche %>%
+  group_by(Chamber) %>%
+  summarise(max = max(MO2.no.Background.Correction, na.rm=TRUE))
+```
+All negative so this is fine
