@@ -1,0 +1,164 @@
+---
+title: "Respy Template"
+author: "Briana Matthews"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+  # Setting the environment
+
+```{r}
+setwd("")
+library(knitr)
+library(ggplot2)
+library(cowplot)
+library(respR)
+t1 <- read.csv("Trial1Resp.csv") #load raw trial data sheet
+#View(t1)
+initial <- read.csv("Trial1_bgin.csv") #load background initial data sheet
+#View(initial)
+final <- read.csv("Trial1_bgfin.csv") #load background final data sheet 
+#View(final)
+
+# define flush and measure periods - These are the numbers for a 1 hour cycle
+flush <- 120 # 2 min flush
+wait <- 120   # 2 mins wait
+measure <- 3360  # 56 mins measure
+
+```
+# CHAMBER 1
+
+## Data QA/QC
+This chunk is grabbing the columns we need, and changing the column names so that it is in usable form for respR
+```{r}
+## to subset: data[x,y] you need the , to make it complete. to leave your X blank while filling in Y means you want all the rows associated with your chosen collumn, and vice-cerse
+t1_1 <- t1[,c("X", "CH1.O2...air.sat..")] #AutoResp names the columns "CH1.02...air.sat.." in the raw data set, you have to process the data one chamber at a time, this isolates the raw data for Chamber 1
+#View(t1_1) #<- this command opens the sheet in a new tab to view isolated
+
+##renaming the columns to use with RespR
+t1_1 <- plyr::rename(t1_1, c("CH1.O2...air.sat.."="Oxy")) 
+#View(t1_1)
+
+# now same thing for the background data 
+in_1 <- initial[,c("X", "CH1.O2...air.sat..")]
+
+in_1 <- plyr::rename(in_1, c("CH1.O2...air.sat.."="Oxy")) 
+
+fin_1 <- final[,c("X", "CH1.O2...air.sat..")]
+
+fin_1 <- plyr::rename(fin_1, c("CH1.O2...air.sat.."="Oxy")) 
+
+#View(in_1)
+#View(fin_1)
+
+#plots background and trial data for the first chamber
+ggplot(t1_1, aes(x=X, y=Oxy)) + geom_point()
+ggplot(in_1, aes(x=X, y=Oxy)) + geom_point()
+ggplot(fin_1, aes(x=X, y=Oxy)) + geom_point()
+
+## Here we subset the background data (one cycle/hours worth of data) to get the rate of respiration for a single measure period
+#Before you get to this point, go to the excel sheet with the background data. Find the first row labeled with the Phase M1 (first measure), and go 240 rows above that one (should be labelled F1 for first flush, but its not always accurately labeled). Delete any rows above the 240 rows of flush data for ALL chambers for both the initial and final excels. That way the one cycle isolated for background can be identified in the rows 241 - 3600 and can be easily subsetted. If the initial and final are not on the same # rows, it can cause timestamp issues later in the code. The time it takes to set up the chambers or fix things before starting the experiment must be removed from the data. 
+
+bg_in_1 <- in_1 |>
+  subset_data(from = 241, to = 3600, by = "row") |>
+  calc_rate.bg()
+bg_in_1
+
+bg_fin_1 <- fin_1 |>
+  subset_data(from = 241, to = 3600, by = "row") |>
+  calc_rate.bg()
+bg_fin_1
+```
+
+## Start of RespR
+
+### Looking at the data
+This is the preliminary view of the entire run of one coral. The default width is 0.1, but you can change that by adding width=X.XX inside the ()
+```{r}
+##We want rate.rev to be false so that production is positive, and consumption is negative
+t1_1_inspect <- inspect(t1_1, rate.rev = FALSE)
+#The warning about uneven time can be safely disregarded as it stems from the per minute recording 
+#interval being converted to decimalised hours, and we can see the minimum and maximum 
+#intervals indicate there are no major gaps. 
+
+# This should be similar to the above "test" just with the width changed 0.2
+
+t1_inspect2 <- inspect(t1_1, rate.rev = FALSE, width = 0.2)
+
+#Manually subsetting every replicate would be difficult, but since we know they cycle every hour (3600s) 
+#and there are further replicates after the first ends at row XXX, we can use straightforward R syntax to perform a loop.
+```
+
+### Setting up the cycles
+
+```{r}
+## start rows for each rep using sequence function (from, to, by)
+loops <- seq(1892, 286532, 3600) ## first rep (the row that starts the first flush F1- not labeled "Flush"),  last rep (the first row of data of the last measure period; should be around M70-M85 for three days of data), interval in seconds for each loop (3600 for 1 hour cycles)
+
+## data starts - apply wait and flush periods
+starts <- loops + wait + flush
+## data ends - apply wait and flush AND measure periods
+ends <- loops + wait + flush + measure
+
+#These identified intervals will be the same for every chamber in the same experiment
+```
+
+### The Loop function
+First we set up an empty list that will store all the rates. The loop function will go through our start times to the end times and find the linear increase/decrease for each cycle. It will store the rate of change (i.e. slopes) into the rmr list
+```{r}
+
+rates <- calc_rate.int(t1_1, 
+                       starts=loops,
+                       wait=240,
+                       measure=3360,
+                       quiet = TRUE,
+                       legend=TRUE,
+                       pos=c(1:80)) #viewing each hourly cycle's oxygen data. The second number should be the total # of cycles/flushes/measures in the experiment
+
+
+rates_adj <- adjust_rate(rates,
+                        by = bg_in_1, 
+                        by2 = bg_fin_1,
+                        method = "linear") 
+
+#> adjust_rate: Rate adjustments applied using "linear" method - this code calculates the rate of change of o2 over the cycle hour
+
+
+rates_con <- convert_rate(rates_adj, 
+                          oxy.unit = "%Air", 
+                          time.unit = "sec",
+                          output.unit = "mg/h/g",
+                          volume = 594, #total resp volume - coral volume (the volume of water in the entire recirculating system, include plug volume) 
+                          mass = 9.41, #wet weight of the coral/organism (make sure to subtract coral plug wet weight to isolate the coral weight)
+                          S=35, #salinity
+                          t=30, #temperature
+                          p=1.009)|> #air pressure in hPa, usually looked up on the start day of the exp and assumed constant through the week
+  select_rate(method = "rsq", n = c(0.0,1)) #selecting for r2. "0.0" can be changed to 0.9 to only show rates with R2 values above 0.9
+
+summary(rates_con)
+View(rates_con)
+plot(rates_con, type="rate")
+
+#this code calculates the mo2 for each hour/cycle of the experiment and stores it in a list
+mo2 <- rates_con[["summary"]][['rate.output']]
+mo2
+loop <- 1:length(mo2)
+data_c1 <- data.frame(loop, mo2)
+
+#this plots the mo2 values by hour
+ggplot(data_c1, aes(x=loop, y=mo2)) + geom_point() + theme_classic() +
+  ggtitle("OFAV Trial 1 Chamber 1") + geom_hline(aes(yintercept=0)) +
+  labs(x="Loops", y=expression(MO[2]~(mgO[2]~kg^-1~h^-1))) 
+```
+You would then copy and paste this code and change the data to subset data for Chamber 2 and so on. Then save the data for each file as a csv below.
+
+```{r}
+write.csv(data_c1, file = "Trial1Chamber1.csv", row.names = TRUE)  
+write.csv(data_c2, file = "Trial1Chamber2.csv", row.names = TRUE)
+write.csv(data_c3, file = "Trial1Chamber3.csv", row.names = TRUE)  
+write.csv(data_c4, file = "Trial1Chamber4.csv", row.names = TRUE)  
+write.csv(data_c5, file = "Trial1Chamber5.csv", row.names = TRUE)  
+write.csv(data_c6, file = "Trial1Chamber6.csv", row.names = TRUE)  
+write.csv(data_c7, file = "Trial1Chamber7.csv", row.names = TRUE)  
+write.csv(data_c8, file = "Trial1Chamber8.csv", row.names = TRUE)  
+```
